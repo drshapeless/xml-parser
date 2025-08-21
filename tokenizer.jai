@@ -78,7 +78,7 @@ Attribute :: struct {
 Tag :: struct {
     type: Tag_Type;
     name: string;
-    attrs: []Attribute;
+    attrs: [..]Attribute;
 }
 
 parse_tag :: (token: Token) -> Tag {
@@ -123,7 +123,7 @@ parse_tag :: (token: Token) -> Tag {
     return tag;
 }
 
-parse_attrs :: (s: string) -> []Attribute {
+parse_attrs :: (s: string) -> [..]Attribute {
     attrs: [..]Attribute;
 
     new_pos := skip_whitespace(s);
@@ -148,6 +148,111 @@ parse_attrs :: (s: string) -> []Attribute {
     }
 
     return attrs;
+}
+
+Node_Type :: enum {
+    NODE;
+    PLAIN;
+}
+
+Node :: struct {
+    depth: int;
+    type: Node_Type;
+    raw_string: string;
+
+    tag_name: string;
+    attrs: [..]Attribute;
+    children: [..]Node;
+
+    parent: *Node;
+
+    done := false;
+}
+
+// This function parse the tokens and return a root node.
+parse_tokens :: (tokens: []Token) -> Node {
+    root_node: Node;
+
+    current_node: *Node = null;
+
+    for token: tokens {
+        if token.type == .TAG {
+            tag := parse_tag(token);
+
+            if tag.type == {
+            case .DECLARATION;
+                #through;
+            case .COMMENT;
+                continue;
+            case .OPEN;
+            {
+                if current_node != null {
+                    new_node: Node;
+                    new_node.type = .NODE;
+                    new_node.depth = current_node.depth + 1;
+                    new_node.parent = current_node;
+                    new_node.raw_string = token.raw_string;
+                    new_node.tag_name = tag.name;
+                    new_node.attrs = tag.attrs;
+
+                    array_add(*current_node.children, new_node);
+                    current_node = *current_node.children[current_node.children.count - 1];
+                } else {
+                    root_node.type = .NODE;
+                    root_node.raw_string = token.raw_string;
+                    root_node.tag_name = tag.name;
+                    root_node.attrs = tag.attrs;
+                    current_node = *root_node;
+                }
+            }
+            case .CLOSE;
+            {
+                if current_node.tag_name != tag.name {
+                    log_error("Unmatch close tag, expect %, get %, raw_string %", current_node.tag_name, tag.name, token.raw_string);
+                    break;
+                }
+
+                if current_node.done == true {
+                    log_error("Extra close tag, raw_string %", token.raw_string);
+                    break;
+                }
+                current_node.done = true;
+
+                if current_node.parent == null {
+                    // We are at the root node
+                    break;
+                }
+
+                current_node = current_node.parent;
+            }
+            case .SELF_CLOSE;
+            {
+                new_node: Node;
+                new_node.depth = current_node.depth + 1;
+                new_node.done = true;
+                new_node.type = .NODE;
+                new_node.raw_string = token.raw_string;
+                new_node.tag_name = tag.name;
+                new_node.attrs = tag.attrs;
+                new_node.parent = current_node;
+
+                array_add(*current_node.children, new_node);
+            }
+            }
+        } else {
+            // token is text
+            new_node: Node;
+            new_node.depth = current_node.depth + 1;
+            new_node.done;
+            new_node.type = .PLAIN;
+            new_node.raw_string = token.raw_string;
+            new_node.parent = current_node;
+
+            array_add(*current_node.children, new_node);
+        }
+    }
+
+    return root_node;
 }
 
 #import "Basic";
