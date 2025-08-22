@@ -4,18 +4,21 @@ main :: () {
         log_error("vk.xml not found");
     }
 
-    tokens := tokenize(source_string);
+    node := parse_xml(source_string);
 
-    for token: tokens {
-        if token.type == .TAG {
-            tag := parse_tag(token);
-            log("tag type: %, tag name: %", tag.type, tag.name);
-            for attr: tag.attrs {
-                log("    key: %, value: %", attr.key, attr.value);
-            }
-        } else {
-            log("this is a text");
-        }
+    log("children count %", node.children.count);
+
+    types_node := xml_find_first_child_of_tag_name(node, "types");
+    assert(types_node != null);
+
+    log("types children count %", types_node.children.count);
+
+    if types_node.type == {
+    case .NODE;
+        log("");
+        log("");
+    case .PLAIN;
+
     }
 }
 
@@ -24,4 +27,4 @@ main :: () {
 #import "File";
 #import "String";
 
-#load "tokenizer.jai";
+#load "module.jai";

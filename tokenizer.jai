@@ -158,7 +158,11 @@ Node_Type :: enum {
 Node :: struct {
     depth: int;
     type: Node_Type;
+    // This is essensially outerHTML
     raw_string: string;
+
+    // I think this is a good idea to have a big inner string like innerHTML
+    inner_string: string;
 
     tag_name: string;
     attrs: [..]Attribute;
@@ -170,7 +174,7 @@ Node :: struct {
 }
 
 // This function parse the tokens and return a root node.
-parse_tokens :: (tokens: []Token) -> Node {
+read_tokens :: (tokens: []Token) -> Node {
     root_node: Node;
 
     current_node: *Node = null;
@@ -216,12 +220,18 @@ parse_tokens :: (tokens: []Token) -> Node {
                     log_error("Extra close tag, raw_string %", token.raw_string);
                     break;
                 }
+
                 current_node.done = true;
 
                 if current_node.parent == null {
                     // We are at the root node
                     break;
                 }
+
+                // compute the real raw string
+                current_node.inner_string.data = current_node.raw_string.data + current_node.raw_string.count;
+                current_node.inner_string.count = token.raw_string.data - current_node.inner_string.data;
+                current_node.raw_string.count = token.raw_string.data + token.raw_string.count - current_node.raw_string.data;
 
                 current_node = current_node.parent;
             }
