@@ -126,9 +126,10 @@ parse_tag :: (token: Token) -> Tag {
 parse_attrs :: (s: string) -> [..]Attribute {
     attrs: [..]Attribute;
 
-    new_pos := skip_whitespace(s);
+    new_pos := 0;
 
     while new_pos < s.count {
+        new_pos = skip_whitespace(s, new_pos);
         equal_pos := find_index_from_left(s, #char "=", new_pos);
         if equal_pos < 0 {
             break;

@@ -15,6 +15,16 @@ xml_find_first_child_of_tag_name :: (node: Node, name: string) -> *Node {
     return null;
 }
 
+xml_get_attr :: (node: Node, key: string) -> string {
+    for attr: node.attrs {
+        if attr.key == key {
+            return attr.value;
+        }
+    }
+
+    return "";
+}
+
 #scope_file
 
 #load "tokenizer.jai";
