@@ -190,7 +190,6 @@ read_tokens :: (tokens: []Token) -> Node {
             case .COMMENT;
                 continue;
             case .OPEN;
-            {
                 if current_node != null {
                     new_node: Node;
                     new_node.type = .NODE;
@@ -209,9 +208,7 @@ read_tokens :: (tokens: []Token) -> Node {
                     root_node.attrs = tag.attrs;
                     current_node = *root_node;
                 }
-            }
             case .CLOSE;
-            {
                 if current_node.tag_name != tag.name {
                     log_error("Unmatch close tag, expect %, get %, raw_string %", current_node.tag_name, tag.name, token.raw_string);
                     break;
@@ -235,9 +232,7 @@ read_tokens :: (tokens: []Token) -> Node {
                 current_node.raw_string.count = token.raw_string.data + token.raw_string.count - current_node.raw_string.data;
 
                 current_node = current_node.parent;
-            }
             case .SELF_CLOSE;
-            {
                 new_node: Node;
                 new_node.depth = current_node.depth + 1;
                 new_node.done = true;
@@ -248,7 +243,6 @@ read_tokens :: (tokens: []Token) -> Node {
                 new_node.parent = current_node;
 
                 array_add(*current_node.children, new_node);
-            }
             }
         } else {
             // token is text
