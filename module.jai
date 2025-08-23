@@ -5,25 +5,17 @@ parse_xml :: (s: string) -> Node {
     return node;
 }
 
-find_first_child_of_tag_name :: (node: Node, name: string) -> *Node {
-    for child : node.children {
-        if child.type == .NODE && child.tag_name == name {
-            return *child;
+find_node_of_tag_name :: (parent: Node, name: string, index: int = 0) -> *Node, int {
+    if index < parent.children.count {
+        for i : index..parent.children.count - 1 {
+            child := *parent.children[i];
+            if child.type == .NODE && child.tag_name == name {
+                return child, i;
+            }
         }
     }
 
-    return null;
-}
-
-// Return -1 when not found.
-find_first_index_of_tag_name :: (node: Node, name: string) -> int {
-    for index: 0..node.children.count - 1 {
-        child := node.children[index];
-        if child.type == .NODE && child.tag_name == name {
-            return index;
-        }
-    }
-    return -1;
+    return null, -1;
 }
 
 get_attr :: (node: Node, key: string) -> string {

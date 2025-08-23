@@ -9,7 +9,7 @@ main :: () {
 
     root := parse_xml(source_string);
 
-    types_node := find_first_child_of_tag_name(root, "types");
+    types_node := find_node_of_tag_name(root, "types");
     assert(types_node != null);
 
     sb: String_Builder;
@@ -33,10 +33,10 @@ gen_types :: (node: Node, sb: *String_Builder) {
                 alias := get_attr(child, "alias");
                 append(sb, sprint("% :: %;\n", name, alias));
             } else {
-                name_node := find_first_child_of_tag_name(child, "name");
+                name_node := find_node_of_tag_name(child, "name");
                 name := name_node.inner_string;
 
-                type_node := find_first_child_of_tag_name(child, "type");
+                type_node := find_node_of_tag_name(child, "type");
                 type := type_node.inner_string;
                 append(sb, sprint("% :: %;\n", name, type));
             }
@@ -46,9 +46,9 @@ gen_types :: (node: Node, sb: *String_Builder) {
                 alias := get_attr(child, "alias");
                 append(sb, sprint("% :: %;\n", name, alias));
             } else {
-                name_node := find_first_child_of_tag_name(child, "name");
+                name_node := find_node_of_tag_name(child, "name");
                 name := name_node.inner_string;
-                type_node := find_first_child_of_tag_name(child, "type");
+                type_node := find_node_of_tag_name(child, "type");
                 type := type_node.inner_string;
 
                 if type == "VK_DEFINE_HANDLE" {
@@ -60,28 +60,86 @@ gen_types :: (node: Node, sb: *String_Builder) {
                 }
             }
         case "funcpointer";
-            name_index := find_first_index_of_tag_name(child, "name");
+            name_node, name_index := find_node_of_tag_name(child, "name");
             if name_index < 0 {
                 log("funcpointer error: %", child);
                 continue;
             }
-            name := child.children[name_index].inner_string;
+            name := name_node.inner_string;
             log("func: %", name);
 
-            // There is a fucking open brace
-            index := name_index + 2;
+            index := name_index + 1;
             while index < child.children.count {
-                type_node := child.children[index];
-                assert(type_node.tag_name == "type", "funcpointer error, the tagname is %: %", type_node.tag_name, child.raw_string);
-                parameter_node := child.children[index + 1];
-                assert(parameter_node.type == .PLAIN, "funcpointer error: %", child.raw_string);
-                log("    %", type_node.inner_string);
-                log("    %", parameter_node.raw_string);
-                index += 2;
-            }
+                type_node, type_index := find_node_of_tag_name(child, "type", index);
+                if type_node == null {
+                    break;
+                }
+                type_name := type_node.inner_string;
+                type_name = type_conversion(type_name);
 
+                parameter_node := child.children[type_index + 1];
+                parameter_name := parameter_node.raw_string;
+                is_pointer := begins_with(parameter_name, "*");
+                parameter_name = clean_parameter_name(parameter_name);
+
+                if is_pointer {
+                    log("    %: *%", parameter_name, type_name);
+                } else {
+                    log("    %: %", parameter_name, type_name);
+                }
+                index = type_index + 2;
+            }
         }
     }
+}
+
+DEFAULT_PARAMETER_TRIM :: "*,(); \n";
+
+clean_parameter_name :: (s: string) -> string {
+    i := find_index_from_left(s, "const");
+
+    ss := s;
+    if i >= 0 {
+        ss = slice(s, 0, i);
+    }
+
+    return trim(ss, DEFAULT_PARAMETER_TRIM);
+}
+
+C_TYPE_NAMES :: string.[
+"int8_t",
+"int16_t",
+"int32_t",
+"int64_t",
+"uint8_t",
+"uint16_t",
+"uint32_t",
+"uint64_t",
+"char",
+"size_t",
+];
+
+JAI_TYPE_NAMES :: string.[
+"s8",
+"s16",
+"s32",
+"s64",
+"u8",
+"u16",
+"u32",
+"u64",
+"u8",
+"u64",
+];
+
+type_conversion :: (s: string) -> string {
+    for t, i : C_TYPE_NAMES {
+        if s == t {
+            return JAI_TYPE_NAMES[i];
+        }
+    }
+
+    return s;
 }
 
 #import "Basic";
