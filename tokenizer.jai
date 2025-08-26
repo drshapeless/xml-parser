@@ -42,7 +42,7 @@ tokenize :: (s: string) -> []Token {
             }
 
             token.type = .TEXT;
-            token.raw_string = slice(s, pos, end_pos - pos - 1);
+            token.raw_string = slice(s, pos, end_pos - pos);
 
             array_add(*tokens, token);
             pos = end_pos;
