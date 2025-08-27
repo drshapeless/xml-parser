@@ -73,6 +73,19 @@ C_TYPE_NAMES :: string.[
 "size_t",
 ];
 
+C_TYPE_SIZES :: int.[
+8,
+16,
+32,
+64,
+8,
+16,
+32,
+64,
+8,
+64,
+];
+
 JAI_TYPE_NAMES :: string.[
 "s8",
 "s16",
@@ -222,6 +235,8 @@ generate_struct :: (node: Node, sb: *String_Builder) {
         append(sb, struct_name);
         append(sb, " :: struct {\n");
 
+        bitmask_handler : Struct_Bitmask_Handler;
+
         // member_node is probably a bad name because it may not be a
         // member. But in today, Aug 25 2025, all the children of a
         // struct node is member.
@@ -270,36 +285,87 @@ generate_struct :: (node: Node, sb: *String_Builder) {
                         } else if contains(s, ":") {
                             // I hate Nvidia for making things
                             // complicated by introducing bitfield.
-                            log("bitfield detected, struct: %, member: %, bitfield: %", struct_name, name_node.inner_string, s);
+
+                            if bitmask_handler.max_size == 0 {
+                                // The type should have parsed at this point.
+                                type_name := type_node.inner_string;
+                                type_size := get_c_type_size(type_name);
+
+                                bitmask_handler.max_size = type_size;
+                            }
+
+                            // I am lazy, I don't check error.
+                            bit_size := string_to_int(trim_left(s, ":"));
+                            if bit_size == 0 {
+                                log("bit size should never be zero, you are fucked!");
+                            }
+                            bitmask_handler.current_size += bit_size;
+                            append(*bitmask_handler.saved_string, "    ");
+                            append(*bitmask_handler.saved_string, name_node.inner_string);
+                            append(*bitmask_handler.saved_string, " : ");
+                            append(*bitmask_handler.saved_string, type_conversion(type_node.inner_string));
+                            append(*bitmask_handler.saved_string, ";");
+                            append(*bitmask_handler.saved_string, sprint(" /* % bit */\n", bit_size));
+
+
+                            assert(bitmask_handler.current_size <= bitmask_handler.max_size ,"bitmask current size cannot be bigger than max size");
+
+
+                            if bitmask_handler.current_size == bitmask_handler.max_size {
+                                // Now we export a bit field to the main struct
+                                bitmask_handler.done = true;
+                            }
+
+                            // log("bitfield detected, struct: %, member: %, bitfield: %", struct_name, name_node.inner_string, s);
                         }
                     }
                 }
 
-                assert(type_node != null);
-                type_name := type_node.inner_string;
-                assert(name_node != null);
-                parameter_name := name_node.inner_string;
+                if bitmask_handler.done {
+                    append(sb, "    __bitfield: ");
+                    append(sb, sprint("u%;\n", bitmask_handler.max_size));
+                    append(sb, "/*\n");
+                    append(sb, builder_to_string(*bitmask_handler.saved_string));
+                    append(sb, "*/\n");
+                    bitmask_handler = .{};
+                } else if bitmask_handler.max_size == 0 {
+                    assert(type_node != null);
+                    type_name := type_node.inner_string;
+                    assert(name_node != null);
+                    parameter_name := name_node.inner_string;
 
-                append(sb, "    ");
-                append(sb, parameter_name);
-                append(sb, ": ");
-                while number_of_pointer > 0 {
-                    append(sb, "*");
-                    number_of_pointer -= 1;
+                    append(sb, "    ");
+                    append(sb, parameter_name);
+                    append(sb, ": ");
+                    while number_of_pointer > 0 {
+                        append(sb, "*");
+                        number_of_pointer -= 1;
+                    }
+                    append(sb, type_prefix);
+                    append(sb, type_conversion(type_name));
+                    append(sb, ";\n");
                 }
-                append(sb, type_prefix);
-                append(sb, type_conversion(type_name));
-                append(sb, ";\n");
             }
         }
         append(sb, "}\n\n");
     }
 }
 
+get_c_type_size :: (type: string) -> int {
+    for c_type, index : C_TYPE_NAMES {
+        if c_type == type {
+            return C_TYPE_SIZES[index];
+        }
+    }
+
+    return 0;
+}
+
 Struct_Bitmask_Handler :: struct {
-    saved_string: string;
+    saved_string: String_Builder;
     max_size: int;
     current_size: int;
+    done: bool;
 }
 
 #import "Basic";
