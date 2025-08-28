@@ -1,10 +1,16 @@
 // This program intentionally does not free any of the string it created.
 
+// In vk.xml, there are somehow two sets of API mixing together. One
+// is vulkan and one is vulkansc. This leads to redundant occurence of
+// type, parameter and functions. I have to deal with them here and
+// there to remove them when detecting an attribute of api="vulkansc".
+
 Buffers :: struct {
     types: String_Builder;
     structs: String_Builder;
     constants: String_Builder;
     enums: String_Builder;
+    functions: String_Builder;
 }
 
 main :: () {
@@ -26,6 +32,7 @@ main :: () {
     write_entire_file("structs.jai", *buffers.structs);
     write_entire_file("constants.jai", *buffers.constants);
     write_entire_file("enums.jai", *buffers.enums);
+    write_entire_file("functions.jai", *buffers.functions);
 
     at = current_time_monotonic();
     end_time := to_float64_seconds(at);
@@ -37,6 +44,9 @@ gen_types :: (node: Node, buffers: *Buffers) {
         if child.tag_name == "types" {
             for type_node : child.children {
                 if type_node.tag_name == "type" {
+                    if is_vulkansc(type_node) {
+                        continue;
+                    }
                     category := get_attr(type_node, "category");
                     if category == {
                     case "bitmask";
@@ -62,6 +72,8 @@ gen_types :: (node: Node, buffers: *Buffers) {
             case "bitmask";
                 generate_enum_bitmask(child, *buffers.enums);
             }
+        } else if child.tag_name == "commands" {
+
         }
     }
 }
@@ -268,6 +280,9 @@ generate_struct :: (node: Node, sb: *String_Builder) {
         for member_node: node.children {
             // This check is redundant.
             if member_node.tag_name == "member" {
+                if is_vulkansc(member_node) {
+                    continue;
+                }
                 type_node : *Node;
                 name_node : *Node;
                 is_square_bracket_begin := false;
@@ -497,6 +512,21 @@ generate_enum_bitmask :: (node: Node, sb: *String_Builder) {
     }
 
     append(sb, "}\n\n");
+}
+
+is_vulkansc :: (node: Node) -> bool {
+    api := get_attr(node, "api");
+    if api == "vulkansc" {
+        return true;
+    }
+
+    return false;
+}
+
+generate_commands :: (node: Node, sb: *String_Builder) {
+    for command_node : node.children {
+
+    }
 }
 
 #import "Basic";
