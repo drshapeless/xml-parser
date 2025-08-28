@@ -3,6 +3,8 @@
 Buffers :: struct {
     types: String_Builder;
     structs: String_Builder;
+    constants: String_Builder;
+    enums: String_Builder;
 }
 
 main :: () {
@@ -16,15 +18,14 @@ main :: () {
 
     root := parse_xml(source_string);
 
-    types_node := find_node_of_tag_name(root, "types");
-    assert(types_node != null);
-
     buffers: Buffers;
 
-    gen_types(types_node, *buffers);
+    gen_types(root, *buffers);
 
     write_entire_file("types.jai", *buffers.types);
     write_entire_file("structs.jai", *buffers.structs);
+    write_entire_file("constants.jai", *buffers.constants);
+    write_entire_file("enums.jai", *buffers.enums);
 
     at = current_time_monotonic();
     end_time := to_float64_seconds(at);
@@ -33,16 +34,34 @@ main :: () {
 
 gen_types :: (node: Node, buffers: *Buffers) {
     for child: node.children {
-        category := get_attr(child, "category");
-        if category == {
-        case "bitmask";
-            generate_bitmask(child, *buffers.types);
-        case "handle";
-            generate_handle(child, *buffers.types);
-        case "funcpointer";
-            generate_funcpointer(child, *buffers.types);
-        case "struct";
-            generate_struct(child, *buffers.structs);
+        if child.tag_name == "types" {
+            for type_node : child.children {
+                if type_node.tag_name == "type" {
+                    category := get_attr(type_node, "category");
+                    if category == {
+                    case "bitmask";
+                        generate_bitmask(type_node, *buffers.types);
+                    case "handle";
+                        generate_handle(type_node, *buffers.types);
+                    case "funcpointer";
+                        generate_funcpointer(type_node, *buffers.types);
+                    case "struct";
+                        generate_struct(type_node, *buffers.structs);
+                    }
+                }
+            }
+        } else if child.tag_name == "enums" {
+            type := get_attr(child, "type");
+            if type == {
+            case "constants";
+                for enum_node : child.children {
+                    generate_enum_constants(enum_node, *buffers.constants);
+                }
+            case "enum";
+                generate_enum(child, *buffers.enums);
+            case "bitmask";
+                generate_enum_bitmask(child, *buffers.enums);
+            }
         }
     }
 }
@@ -71,6 +90,8 @@ C_TYPE_NAMES :: string.[
 "uint64_t",
 "char",
 "size_t",
+"float",
+"double",
 ];
 
 C_TYPE_SIZES :: int.[
@@ -83,6 +104,8 @@ C_TYPE_SIZES :: int.[
 32,
 64,
 8,
+64,
+32,
 64,
 ];
 
@@ -97,6 +120,8 @@ JAI_TYPE_NAMES :: string.[
 "u64",
 "u8",
 "u64",
+"float",
+"float64",
 ];
 
 type_conversion :: (s: string) -> string {
@@ -296,9 +321,7 @@ generate_struct :: (node: Node, sb: *String_Builder) {
 
                             // I am lazy, I don't check error.
                             bit_size := string_to_int(trim_left(s, ":"));
-                            if bit_size == 0 {
-                                log("bit size should never be zero, you are fucked!");
-                            }
+                            assert(bit_size != 0, "bit size should never be zero, you are fucked!");
                             bitmask_handler.current_size += bit_size;
                             append(*bitmask_handler.saved_string, "    ");
                             append(*bitmask_handler.saved_string, name_node.inner_string);
@@ -366,6 +389,114 @@ Struct_Bitmask_Handler :: struct {
     max_size: int;
     current_size: int;
     done: bool;
+}
+
+generate_enum_constants :: (node: Node, sb: *String_Builder) {
+    name := get_attr(node, "name");
+    type := type_conversion(get_attr(node, "type"));
+    value := trim(get_attr(node, "value"), "()ULF");
+
+    append(sb, name);
+    append(sb, " : ");
+    append(sb, type);
+    append(sb, " : ");
+
+    if begins_with(value, "~") {
+        append(sb, "~cast(");
+        append(sb, type);
+        append(sb, ")");
+        append(sb, trim_left(value, "~"));
+    } else {
+        append(sb, value);
+    }
+    append(sb, ";\n");
+}
+
+generate_enum :: (node: Node, sb: *String_Builder) {
+    enum_name := get_attr(node, "name");
+
+    append(sb, enum_name);
+    append(sb, " :: enum s32 #specified {\n");
+
+    for member_node : node.children {
+        if member_node.tag_name == "enum" {
+            name := get_attr(member_node, "name");
+            value := get_attr(member_node, "value");
+            comment := get_attr(member_node, "comment");
+
+            append(sb, "    ");
+            append(sb, name);
+            append(sb, " :: ");
+            if value.count > 0 {
+                append(sb, value);
+            } else {
+                alias := get_attr(member_node, "alias");
+                assert(alias.count > 0);
+                append(sb, alias);
+            }
+            append(sb, ";");
+
+            if comment.count > 0 {
+                append(sb, " /* ");
+                append(sb, comment);
+                append(sb, " */");
+            }
+
+            append(sb, "\n");
+        } else if member_node.tag_name == "comment" {
+            append(sb, "/* ");
+            append(sb, member_node.inner_string);
+            append(sb, " */\n");
+        }
+    }
+
+    append(sb, "}\n\n");
+}
+
+generate_enum_bitmask :: (node: Node, sb: *String_Builder) {
+    enum_name := get_attr(node, "name");
+
+    enum_type := "u32";
+    bitwidth := get_attr(node, "bitwidth");
+    if bitwidth == "64" {
+        enum_type = "u64";
+    }
+
+    append(sb, enum_name);
+    append(sb, " :: enum_flags ");
+    append(sb, enum_type);
+    append(sb, " {\n");
+
+    for member_node : node.children {
+        if member_node.tag_name == "enum" {
+            name := get_attr(member_node, "name");
+            value := get_attr(member_node, "value");
+            bitpos := get_attr(member_node, "bitpos");
+
+            append(sb, "    ");
+            append(sb, name);
+            append(sb, " :: ");
+
+            if value.count > 0 {
+                append(sb, value);
+            } else if bitpos.count > 0 {
+                append(sb, "1 << ");
+                append(sb, bitpos);
+            } else {
+                alias := get_attr(member_node, "alias");
+                assert(alias.count > 0);
+                append(sb, alias);
+            }
+
+            append(sb, ";\n");
+        } else if member_node.tag_name == "comment" {
+            append(sb, "/* ");
+            append(sb, member_node.inner_string);
+            append(sb, " */\n");
+        }
+    }
+
+    append(sb, "}\n\n");
 }
 
 #import "Basic";
