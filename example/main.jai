@@ -641,6 +641,53 @@ generate_commands :: (node: Node, sb: *String_Builder) {
     }
 }
 
+// This is a slow as fuck function.
+common_prefix :: (strings: []string) -> string {
+    if strings.count == 0 {
+        return "";
+    }
+
+    the_prefix : string = strings[0];
+
+    for s : strings {
+        len := 0;
+        for i : 0..the_prefix.count - 1 {
+            if s.count <= i {
+                break;
+            }
+
+            if s[i] != the_prefix[i] {
+                break;
+            }
+            len += 1;
+        }
+
+        the_prefix.count = len;
+    }
+
+    return the_prefix;
+}
+
+enum_pascal_to_screaming_snake :: (s: string) -> string {
+    sb: String_Builder;
+
+    is_beginning := true;
+    for c: s {
+        if c >= #char "A" && c <= #char "Z" {
+            if is_beginning {
+                is_beginning = false;
+            } else {
+                append(*sb, "_");
+                append(*sb, c);
+            }
+        } else {
+            append(*sb, to_upper(c));
+        }
+    }
+
+    return builder_to_string(*sb);
+}
+
 #import "Basic";
 #import "File";
 #import "String";
