@@ -1,6 +1,6 @@
 {
     "local_modules": ["modules"],
-    "roots": ["main.jai", "build.jai"],
-    "build_root": "build.jai",
+    "roots": ["generate.jai"],
+
     "intermediate_path": "tmp/"
 }
