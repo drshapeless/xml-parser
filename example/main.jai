@@ -73,7 +73,7 @@ gen_types :: (node: Node, buffers: *Buffers) {
                 generate_enum_bitmask(child, *buffers.enums);
             }
         } else if child.tag_name == "commands" {
-
+            generate_commands(child, *buffers.functions);
         }
     }
 }
@@ -523,9 +523,121 @@ is_vulkansc :: (node: Node) -> bool {
     return false;
 }
 
+
+// It is weird that vk.xml does not contains PFN definition, if we
+// want to make a dynamic loader, maybe we have to make it ourself.
 generate_commands :: (node: Node, sb: *String_Builder) {
     for command_node : node.children {
+        if is_vulkansc(command_node) {
+            continue;
+        }
 
+        alias := get_attr(command_node, "alias");
+        if alias.count > 0 {
+            name := get_attr(command_node, "name");
+            append(sb, name);
+            append(sb, " :: ");
+            append(sb, alias);
+            append(sb, ";\n");
+            continue;
+        }
+
+        function_name : string;
+        return_type : string;
+        return_pointer_number : int;
+        is_begining := true;
+
+        for member_node : command_node.children {
+            if is_vulkansc(member_node) {
+                continue;
+            }
+            if member_node.tag_name == "proto" {
+                type_node : *Node;
+                name_node : *Node;
+
+                for proto_child : member_node.children {
+                    if proto_child.type == .NODE {
+                        if proto_child.tag_name == "type" {
+                            type_node = *proto_child;
+                        } else if proto_child.tag_name == "name" {
+                            name_node = *proto_child;
+                        } else {
+                            log("unhandled node in %", function_name);
+                        }
+                    } else if proto_child.type == .PLAIN {
+                        if begins_with(proto_child.raw_string, "*") {
+                            return_pointer_number = count_pointer(proto_child.raw_string);
+                        } else {
+                            log("what is this? %", proto_child.raw_string);
+                        }
+                    }
+                }
+
+                assert(type_node != null);
+                assert(name_node != null);
+
+                function_name = name_node.inner_string;
+                return_type = type_conversion(type_node.inner_string);
+
+                append(sb, function_name);
+                append(sb, " :: (");
+            } else if member_node.tag_name == "param" {
+                type_name : string;
+                param_name : string;
+                number_of_pointer : int;
+                extra_type_prefix : string;
+                for param_child : member_node.children {
+                    if param_child.type == .NODE {
+                        if param_child.tag_name == "type" {
+                            type_name = type_conversion(param_child.inner_string);
+                        } else if param_child.tag_name == "name" {
+                            param_name = param_child.inner_string;
+                        }
+                    } else if param_child.type == .PLAIN {
+                        if begins_with(param_child.raw_string, "*") {
+                            number_of_pointer = count_pointer(param_child.raw_string);
+                        } else if contains(param_child.raw_string, "const") || contains(param_child.raw_string, "struct") {
+                            // do nothing
+                        } else if begins_with(param_child.raw_string, "[") && ends_with(param_child.raw_string, "]") {
+                            extra_type_prefix = param_child.raw_string;
+                        } else {
+                            log("what is in param? %, function: %", param_child.raw_string, function_name);
+                        }
+                    }
+                }
+
+                if param_name.count > 0 {
+                    if is_begining {
+                        is_begining = false;
+                    } else {
+                        append(sb, ", ");
+                    }
+
+                    append(sb, param_name);
+                    append(sb, ": ");
+
+                    while number_of_pointer > 0 {
+                        append(sb, "*");
+                        number_of_pointer -= 1;
+                    }
+
+                    append(sb, type_name);
+                }
+            } else if member_node.tag_name == "implicitexternsyncparams" {
+                // do nothing
+            } else {
+                log("unhandled member node in commands %", member_node.tag_name);
+            }
+        }
+        append(sb, ") -> ");
+
+        while return_pointer_number > 0 {
+            append(sb, "*");
+            return_pointer_number -= 1;
+        }
+
+        append(sb, return_type);
+        append(sb, " #c_call;\n");
     }
 }
 
