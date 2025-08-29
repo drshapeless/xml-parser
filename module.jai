@@ -1,3 +1,26 @@
+Node_Type :: enum {
+    NODE;
+    PLAIN;
+}
+
+Node :: struct {
+    depth: int;
+    type: Node_Type;
+    // This is essensially outerHTML
+    raw_string: string;
+
+    // I think this is a good idea to have a big inner string like innerHTML
+    inner_string: string;
+
+    tag_name: string;
+    attrs: [..]Attribute;
+    children: [..]Node;
+
+    parent: *Node;
+
+    done := false;
+}
+
 parse_xml :: (s: string) -> Node {
     tokens := tokenize(s);
     node := read_tokens(tokens);
@@ -185,29 +208,6 @@ parse_attrs :: (s: string) -> [..]Attribute {
     }
 
     return attrs;
-}
-
-Node_Type :: enum {
-    NODE;
-    PLAIN;
-}
-
-Node :: struct {
-    depth: int;
-    type: Node_Type;
-    // This is essensially outerHTML
-    raw_string: string;
-
-    // I think this is a good idea to have a big inner string like innerHTML
-    inner_string: string;
-
-    tag_name: string;
-    attrs: [..]Attribute;
-    children: [..]Node;
-
-    parent: *Node;
-
-    done := false;
 }
 
 // This function parse the tokens and return a root node.
