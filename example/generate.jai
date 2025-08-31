@@ -25,6 +25,8 @@ generate :: () {
 
     root_node := parse_xml(source_string);
 
+    generation_loop(root_node);
+    output_types();
 
     at = current_time_monotonic();
     end_time := to_float64_seconds(at);
@@ -60,10 +62,11 @@ VK_Function_Param :: struct {
 }
 
 VK_Function :: struct {
-    name        : string;
-    alias       : string;
-    params      : [..]VK_Function_Param;
-    return_type : string;
+    name              : string;
+    alias             : string;
+    params            : [..]VK_Function_Param;
+    number_of_pointer : int;
+    return_type       : string;
 }
 
 VK_Function_Pointer :: VK_Function;
@@ -89,8 +92,9 @@ VK_Enum_Flags_Member :: struct {
 }
 
 VK_Enum_Flags :: struct {
-    name : string;
-    type : string;
+    name    : string;
+    type    : string;
+    members : [..]VK_Enum_Flags_Member;
 }
 
 VK_Constant :: struct {
@@ -101,7 +105,7 @@ VK_Constant :: struct {
 }
 
 generation_loop :: (root_node: Node) {
-    for root_child : node.children {
+    for root_child : root_node.children {
         if root_child.tag_name == {
         case "types";
             handle_types(root_child);
@@ -253,7 +257,7 @@ handle_struct :: (node: Node) {
                 is_square_bracket_begin := false;
                 is_square_bracket_done := false;
                 for member_child : member_node.children {
-                    if member_child.tag_name == .NODE {
+                    if member_child.type == .NODE {
                         if member_child.tag_name == {
                         case "type";
                             vk_member.type = convert_type(member_child.inner_string);
@@ -263,22 +267,22 @@ handle_struct :: (node: Node) {
                         // The only way that a enum node appears is as
                         // a enum constant to indicate a fixed array
                         // length.
-                            array_prefix = sprint("[%]", member_child.inner_string);
+                            vk_member.array_prefix = sprint("[%]", member_child.inner_string);
                         case "name";
-                            name = member_child.inner_string;
+                            vk_member.name = member_child.inner_string;
                         }
                     } else {
                         s := trim(member_child.raw_string);
 
                         if begins_with(s, "[") && ends_with(s, "]") {
-                            array_prefix = s;
+                            vk_member.array_prefix = s;
                         } else if begins_with(s, "*") {
-                            number_of_pointer = count_pointer(s);
+                            vk_member.number_of_pointer = count_pointer(s);
                         } else if contains(s, ":") {
                             // I hate Nvidia for making things
                             // complicated by introducing bitfield.
 
-                            bitmask = string_to_int(trim_left(s, ":"));
+                            vk_member.bitmask = string_to_int(trim_left(s, ":"));
                         }
                     }
                 }
@@ -356,11 +360,100 @@ handle_enum_enum :: (node: Node) {
 }
 
 handle_enum_bitmask :: (node: Node) {
+    using enum_flag : VK_Enum_Flags;
 
+    name = get_attr(node, "name");
+    assert(name.count > 0);
+
+    bitwidth := get_attr(node, "bitwidth");
+    if bitwidth == "64" {
+        type = "u64";
+    } else {
+        type = "u32";
+    }
+
+    for member_node : node.children {
+        member : VK_Enum_Flags_Member;
+        if member_node.tag_name == "enum" {
+            member.name = get_attr(member_node, "name");
+            assert(member.name.count > 0);
+
+            member.value  = get_attr(member_node, "value");
+            member.bitpos = get_attr(member_node, "bitpos");
+            member.alias  = get_attr(member_node, "alias");
+        } else if member_node.tag_name == "comment" {
+            // Same, if the member is a comment tag, put it in the name.
+            member.name = member_node.inner_string;
+        }
+
+        array_add(*members, member);
+    }
+
+    array_add(*vk_enum_flags, enum_flag);
 }
 
 handle_commands :: (parent: Node) {
+    for command_node : parent.children {
+        if is_vulkansc(command_node) {
+            continue;
+        }
 
+        command : VK_Function;
+        if is_self_close_node(command_node) {
+            command.name  = get_attr(command_node, "name");
+            command.alias = get_attr(command_node, "alias");
+
+            assert(command.name.count > 0);
+            assert(command.alias.count > 0);
+        } else {
+            for member_node : command_node.children {
+                if is_vulkansc(member_node) {
+                    continue;
+                }
+
+                if member_node.tag_name ==  {
+                case "proto";
+                    for proto_child : member_node.children {
+                        if proto_child.type == .NODE {
+                            if proto_child.tag_name == {
+                            case "type";
+                                command.return_type = convert_type(proto_child.inner_string);
+                            case "name";
+                                command.name = proto_child.inner_string;
+                            case;
+                                log("unhandled node in %", command.name);
+                            }
+                        } else {
+                            if begins_with(proto_child.raw_string, "*") {
+                                command.number_of_pointer = count_pointer(proto_child.raw_string);
+                            } else {
+                                log("what is this? %", proto_child.raw_string);
+                            }
+                        }
+                    }
+                case "param";
+                    param : VK_Function_Param;
+                    for param_child : member_node.children {
+                        if param_child.type == .NODE {
+                            if param_child.tag_name == {
+                            case "type";
+                                param.type = convert_type(param_child.inner_string);
+                            case "name";
+                                param.name = param_child.inner_string;
+                            }
+                        } else {
+                            if begins_with(param_child.raw_string, "*") {
+                                param.number_of_pointer = count_pointer(param_child.raw_string);
+                            } else if begins_with(param_child.raw_string, "[") && ends_with(param_child.raw_string, "]") {
+                                param.array_prefix = param_child.raw_string;
+                            }
+                        }
+                    }
+                    array_add(*command.params, param);
+                }
+            }
+        }
+    }
 }
 
 is_vulkansc :: (node: Node) -> bool {
@@ -452,6 +545,48 @@ clean_parameter_name :: (s: string) -> string {
     }
 
     return trim(ss, DEFAULT_PARAMETER_TRIM);
+}
+
+output_types :: () {
+    sb: String_Builder;
+
+    for t : vk_types {
+        using t;
+        append(*sb, name);
+        append(*sb, " :: ");
+        if alias.count > 0 {
+            append(*sb, alias);
+        } else {
+            append(*sb, type);
+        }
+        append(*sb, ";\n");
+    }
+
+    write_entire_file("types.jai", *sb);
+}
+
+output_structures :: () {
+
+}
+
+output_functions :: () {
+
+}
+
+output_function_pointers :: () {
+
+}
+
+output_enums :: () {
+
+}
+
+output_enum_flags :: () {
+
+}
+
+output_constants :: () {
+
 }
 
 #import,file "../module.jai";
