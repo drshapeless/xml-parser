@@ -1,5 +1,13 @@
 VK_XML_PATH :: "vk.xml";
 
+// Enabling dynamic loader will generate function pointers to all the
+// functions and a some dynamic loader helper functions.
+DYNAMIC_LOADER :: true;
+
+// Setting STRIP_VULKAN_PREFIX to true will strip all the Vulkan
+// related prefixes, e.g. Vk or vk.
+STRIP_VULKAN_PREFIX :: false;
+
 #run {
     set_build_options_dc(.{do_output = false});
 
@@ -29,11 +37,16 @@ generate :: () {
 
     output_types();
     output_structures();
-    output_functions();
     output_function_pointers();
     output_enums();
     output_enum_flags();
     output_constants();
+    if DYNAMIC_LOADER {
+        output_dynamic_functions();
+    } else {
+        output_functions();
+    }
+
 
     at = current_time_monotonic();
     end_time := to_float64_seconds(at);
@@ -78,6 +91,9 @@ VK_Function :: struct {
 
 VK_Function_Pointer :: VK_Function;
 
+// If the member is a standalone comment, the comment will be stored
+// in name, alias and value will be empty string. This is bad design
+// but whatever.
 VK_Enum_Member :: struct {
     name    : string;
     alias   : string;
@@ -91,6 +107,7 @@ VK_Enum :: struct {
     members : [..]VK_Enum_Member;
 }
 
+// Same as enum member, standalone comment is store in name.
 VK_Enum_Flags_Member :: struct {
     name   : string;
     value  : string;
@@ -861,6 +878,57 @@ output_constants :: () {
     }
 
     write_entire_file("constants.jai", *sb);
+}
+
+output_dynamic_functions :: () {
+    sb: String_Builder;
+    sb0: String_Builder;
+
+    for f : vk_functions {
+        // This part generate function pointer.
+        append(*sb, "PFN_");
+        append(*sb, f.name);
+        append(*sb, " :: ");
+        if f.alias.count > 0 {
+            append(*sb, f.alias);
+            append(*sb, ";\n");
+        } else {
+            append(*sb, "#type (");
+            output_function_params(f.params, *sb);
+            append(*sb, ") -> ");
+            write_pointers(f.number_of_pointer, *sb);
+            append(*sb, f.return_type);
+            append(*sb, " #c_call;\n");
+        }
+
+        // This part generate loader.
+        append(*sb0, f.name);
+        append(*sb0, " : PFN_");
+        append(*sb0, f.name);
+        append(*sb0, ";\n");
+    }
+
+    // TODO: Here I would like to generate three functions,
+    // load_device_functions, load_instance_functions and
+    // load_global_functions. I plan to use three more string builder
+    // for that, but it feels ugly.
+
+    // The way we decide where to put our function is by its param, if
+    // it takes a VkDevice, it is a device function. If it takes a
+    // VkInstance or VkPhysicalDevice, it is an instance function. If
+    // it takes neither of them, it is a global one.
+
+    // Maybe in the future I will just generate to functions.jai
+    write_entire_file("dynamic_functions.jai", *sb);
+    write_entire_file("dynamic_loader.jai", *sb0);
+}
+
+write_pointers :: (count: int, sb: *String_Builder) {
+    n := count;
+    while n > 0 {
+        append(sb, "*");
+        n -= 1;
+    }
 }
 
 #import,file "../module.jai";
