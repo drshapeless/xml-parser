@@ -26,7 +26,14 @@ generate :: () {
     root_node := parse_xml(source_string);
 
     generation_loop(root_node);
+
     output_types();
+    output_structures();
+    output_functions();
+    output_function_pointers();
+    output_enums();
+    output_enum_flags();
+    output_constants();
 
     at = current_time_monotonic();
     end_time := to_float64_seconds(at);
@@ -127,6 +134,12 @@ handle_types :: (parent: Node) {
         if category == {
         case "bitmask";
             handle_bitmask(type_node);
+        case "handle";
+            handle_handle(type_node);
+        case "funcpointer";
+            handle_funcpointer(type_node);
+        case "struct";
+            handle_struct(type_node);
         }
     }
 }
@@ -141,13 +154,15 @@ handle_bitmask :: (node: Node) {
         assert(alias.count > 0);
     } else {
         for child : node.children {
-            if child.tag_name == {
-            case "name";
-                name = child.inner_string;
-            case "type";
-                type = child.inner_string;
-            case;
-                log("unhandled child in bitmask: %", node.raw_string);
+            if child.type == .NODE {
+                if child.tag_name == {
+                case "name";
+                    name = child.inner_string;
+                case "type";
+                    type = child.inner_string;
+                case;
+                    log("unhandled child in bitmask: %", node.raw_string);
+                }
             }
         }
 
@@ -169,21 +184,23 @@ handle_handle :: (node: Node) {
         assert(alias.count > 0);
     } else {
         for child : node.children {
-            if child.tag_name == {
-            case "name";
-                name = child.inner_string;
-            case "type";
-                type_string := child.inner_string;
-                if type_string == {
-                case "VK_DEFINE_HANDLE";
-                    type = "*void";
-                case "VK_DEFINE_NON_DISPATCHABLE_HANDLE";
-                    type = "u64";
+            if child.type == .NODE {
+                if child.tag_name == {
+                case "name";
+                    name = child.inner_string;
+                case "type";
+                    type_string := child.inner_string;
+                    if type_string == {
+                    case "VK_DEFINE_HANDLE";
+                        type = "*void";
+                    case "VK_DEFINE_NON_DISPATCHABLE_HANDLE";
+                        type = "u64";
+                    case;
+                        assert(false, "something wrong in handle: %", node.raw_string);
+                    }
                 case;
-                    assert(false, "something wrong in handle: %", node.raw_string);
+                    log("unhandled child in bitmask: %", node.raw_string);
                 }
-            case;
-                log("unhandled child in bitmask: %", node.raw_string);
             }
         }
 
@@ -310,12 +327,12 @@ handle_enums :: (parent: Node) {
 }
 
 handle_enum_constants :: (node: Node) {
-    using vk_constant : VK_Constant;
     for enum_node : node.children {
-        name = get_attr(node, "name");
-        type = convert_type(get_attr(node, "type"));
+        using c : VK_Constant;
+        name = get_attr(enum_node, "name");
+        type = convert_type(get_attr(enum_node, "type"));
 
-        v := trim(get_attr(node, "value"), "()ULF");
+        v := trim(get_attr(enum_node, "value"), "()ULF");
 
         flip = begins_with(v, "~");
         if flip {
@@ -323,9 +340,8 @@ handle_enum_constants :: (node: Node) {
         } else {
             value = v;
         }
+        array_add(*vk_constants, c);
     }
-
-    array_add(*vk_constants, vk_constant);
 }
 
 // Another cursed name
@@ -453,6 +469,7 @@ handle_commands :: (parent: Node) {
                 }
             }
         }
+        array_add(*vk_functions, command);
     }
 }
 
@@ -534,6 +551,27 @@ count_pointer :: (s: string, prefix_only: bool = true) -> int {
     return cnt;
 }
 
+get_c_type_size :: (type: string) -> int {
+    for c_type, index : C_TYPE_NAMES {
+        if c_type == type {
+            return C_TYPE_SIZES[index];
+        }
+    }
+
+    return 0;
+}
+
+get_jai_type_size :: (type: string) -> int {
+    for j_type, index : JAI_TYPE_NAMES {
+        if j_type == type {
+            return C_TYPE_SIZES[index];
+        }
+    }
+
+    return 0;
+}
+
+
 DEFAULT_PARAMETER_TRIM :: "*,(); \n";
 
 clean_parameter_name :: (s: string) -> string {
@@ -565,28 +603,264 @@ output_types :: () {
     write_entire_file("types.jai", *sb);
 }
 
-output_structures :: () {
 
+output_structure_member :: (member: VK_Structure_Member, sb: *String_Builder) {
+    append(sb, "    ");
+    append(sb, member.name);
+    append(sb, ": ");
+    n := member.number_of_pointer;
+
+    while n > 0 {
+        append(sb, "*");
+        n -= 1;
+    }
+
+    append(sb, member.array_prefix);
+    append(sb, member.type);
+    append(sb, ";");
+    if (member.comment.count > 0) {
+        append(sb, " /* ");
+        append(sb, member.comment);
+        append(sb, " */");
+    }
+
+    append(sb, "\n");
+}
+
+output_structures :: () {
+    sb: String_Builder;
+
+    for structure : vk_structures {
+        append(*sb, structure.name);
+        append(*sb, " :: ");
+        if structure.alias.count > 0 {
+            append(*sb, structure.alias);
+            append(*sb, ";\n");
+        } else {
+            append(*sb, "struct {\n");
+            bitmask_target := 0;
+            bitmask_type : string;
+            bitmask_current := 0;
+            bitmask_members : [..]VK_Structure_Member;
+
+            for member : structure.members {
+                if member.bitmask > 0 {
+                    if bitmask_target == 0 {
+                        bitmask_target = get_jai_type_size(member.type);
+                        bitmask_type = member.type;
+                    }
+
+                    bitmask_current += member.bitmask;
+
+                    array_add(*bitmask_members, member);
+
+                    if bitmask_current == bitmask_target {
+                        append(*sb, "    __bitmask: ");
+                        append(*sb, bitmask_type);
+                        append(*sb, "\n");
+                        append(*sb, "    /*\n");
+                        for bm : bitmask_members {
+                            output_structure_member(bm, *sb);
+                        }
+                        append(*sb, "    */\n");
+                        bitmask_target = 0;
+                        bitmask_type = "";
+                        bitmask_current = 0;
+                        array_reset(*bitmask_members);
+                    }
+                    assert(bitmask_target == 0 || bitmask_current < bitmask_target);
+                } else {
+                    output_structure_member(member, *sb);
+                }
+            }
+            append(*sb, "}\n");
+        }
+
+        append(*sb, "\n");
+    }
+
+    write_entire_file("structures.jai", *sb);
+}
+
+output_function_params :: (params: []VK_Function_Param, sb: *String_Builder) {
+    is_beginning := true;
+    for param : params {
+        if is_beginning {
+            is_beginning = false;
+        } else {
+            append(sb, ", ");
+        }
+        append(sb, param.name);
+        append(sb, ": ");
+
+        n := param.number_of_pointer;
+        while n > 0 {
+            append(sb, "*");
+            n -= 1;
+        }
+
+        append(sb, param.array_prefix);
+        append(sb, param.type);
+    }
 }
 
 output_functions :: () {
+    sb: String_Builder;
 
+    for function : vk_functions {
+        append(*sb, function.name);
+        append(*sb, " :: ");
+        if function.alias.count > 0 {
+            append(*sb, function.alias);
+            append(*sb, ";\n");
+        } else {
+            append(*sb, "(");
+
+            output_function_params(function.params, *sb);
+
+            append(*sb, ") -> ");
+            n := function.number_of_pointer;
+            while n > 0 {
+                append(*sb, "*");
+                n -= 1;
+            }
+            append(*sb, function.return_type);
+            append(*sb, " #c_call;\n");
+        }
+    }
+
+    write_entire_file("functions.jai", *sb);
 }
 
 output_function_pointers :: () {
+    // If I remember correctly, there is not alias in function pointer
 
+    sb: String_Builder;
+
+    for function : vk_function_pointers {
+        append(*sb, function.name);
+        append(*sb, " :: #type (");
+
+        output_function_params(function.params, *sb);
+
+        append(*sb, ") -> ");
+        n := function.number_of_pointer;
+        while n > 0 {
+            append(*sb, "*");
+            n -= 1;
+        }
+        append(*sb, function.return_type);
+        append(*sb, " #c_call;\n");
+    }
+
+    write_entire_file("function_pointers.jai", *sb);
 }
 
 output_enums :: () {
+    sb: String_Builder;
 
+    for e : vk_enums {
+        append(*sb, e.name);
+        append(*sb, " :: ");
+        if e.alias.count > 0 {
+            append(*sb, e.alias);
+            append(*sb, ";\n\n");
+        } else {
+            append(*sb, "enum {\n");
+            for m : e.members {
+                append(*sb, "    ");
+                if m.alias.count > 0 {
+                    append(*sb, m.name);
+                    append(*sb, " :: ");
+                    append(*sb, m.alias);
+                    append(*sb, ";");
+                } else if m.value.count > 0 {
+                    append(*sb, m.name);
+                    append(*sb, " :: ");
+                    append(*sb, m.value);
+                    append(*sb, ";");
+                } else {
+                    append(*sb, "/* ");
+                    append(*sb, m.name);
+                    append(*sb, " */");
+                }
+
+                if m.comment.count > 0 {
+                    append(*sb, " /*");
+                    append(*sb, m.comment);
+                    append(*sb, " */");
+                }
+
+                append(*sb, "\n");
+            }
+            append(*sb, "}\n\n");
+        }
+    }
+
+    write_entire_file("enums.jai", *sb);
 }
 
 output_enum_flags :: () {
+    sb: String_Builder;
 
+    for e : vk_enum_flags {
+        append(*sb, e.name);
+        append(*sb, " :: enum_flags ");
+        append(*sb, e.type);
+        append(*sb, " {\n");
+
+        for m : e.members {
+            append(*sb, "    ");
+            if m.value.count > 0 {
+                append(*sb, m.name);
+                append(*sb, " :: ");
+                append(*sb, m.value);
+                append(*sb, ";");
+            } else if m.bitpos.count > 0 {
+                append(*sb, m.name);
+                append(*sb, " :: ");
+                append(*sb, "1 << ");
+                append(*sb, m.bitpos);
+                append(*sb, ";");
+            } else if m.alias.count > 0 {
+                append(*sb, m.name);
+                append(*sb, " :: ");
+                append(*sb, m.alias);
+                append(*sb, ";");
+            } else {
+                append(*sb, "/* ");
+                append(*sb, m.name);
+                append(*sb, " */");
+            }
+
+            append(*sb, "\n");
+        }
+
+        append(*sb, "}\n\n");
+    }
+
+    write_entire_file("enum_flags.jai", *sb);
 }
 
 output_constants :: () {
+    sb: String_Builder;
 
+    for c : vk_constants {
+        using c;
+        append(*sb, name);
+        append(*sb, " : ");
+        append(*sb, type);
+        append(*sb, " : ");
+        if flip {
+            append(*sb, "~cast(");
+            append(*sb, type);
+            append(*sb, ")");
+        }
+        append(*sb, value);
+        append(*sb, ";\n");
+    }
+
+    write_entire_file("constants.jai", *sb);
 }
 
 #import,file "../module.jai";
