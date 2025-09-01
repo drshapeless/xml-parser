@@ -687,7 +687,17 @@ output_structures :: () {
                     }
                     assert(bitmask_target == 0 || bitmask_current < bitmask_target);
                 } else {
-                    output_structure_member(member, *sb);
+                    if member.name == "sType" && structure.name != "VkBaseInStructure" && structure.name != "VkBaseOutStructure" {
+                        append(*sb, "    ");
+                        append(*sb, member.name);
+                        append(*sb, ": ");
+                        append(*sb, member.type);
+                        append(*sb, " = .");
+                        append(*sb, get_sType_default_value_from_struct_name(structure.name));
+                        append(*sb, ";\n");
+                    } else {
+                        output_structure_member(member, *sb);
+                    }
                 }
             }
             append(*sb, "}\n");
@@ -884,6 +894,10 @@ output_dynamic_functions :: () {
     sb: String_Builder;
     sb0: String_Builder;
 
+    device_func   : [..]string;
+    instance_func : [..]string;
+    global_func   : [..]string;
+
     for f : vk_functions {
         // This part generate function pointer.
         append(*sb, "PFN_");
@@ -906,28 +920,180 @@ output_dynamic_functions :: () {
         append(*sb0, " : PFN_");
         append(*sb0, f.name);
         append(*sb0, ";\n");
+
+        // Check if the first param is VkDevice, VkInstance or VkPhysicalDevice
+        if f.params.count > 0 {
+            first_param_type := f.params[0].type;
+            if first_param_type == {
+            case "VkCommandBuffer";
+                #through;
+            case "VkQueue";
+                #through;
+            case "VkExternalComputeQueueNV";
+                #through;
+            case "VkDevice";
+                if f.name == "vkGetDeviceProcAddr" {
+                    // In Odin, they load this function twice in
+                    // instance and device functions and I don't know
+                    // why.
+                    array_add(*instance_func, f.name);
+                } else {
+                    array_add(*device_func, f.name);
+                }
+            case "VkInstance";
+                #through;
+            case "VkPhysicalDevice";
+                if f.name != "vkGetInstanceProcAddr" {
+                    array_add(*instance_func, f.name);
+                }
+            case;
+                array_add(*global_func, f.name);
+            }
+        }
     }
 
-    // TODO: Here I would like to generate three functions,
-    // load_device_functions, load_instance_functions and
-    // load_global_functions. I plan to use three more string builder
-    // for that, but it feels ugly.
+    append(*sb0, "\n");
+    append(*sb0, "vk_load_global_functions :: (vk_get_instance_proc_addr: *void) {\n");
+    append(*sb0, "    vkGetInstanceProcAddr = xx vk_get_instance_proc_addr;\n\n");
+    align_pos := longest_string(global_func);
+    for f : global_func {
+        append(*sb0, "    ");
+        append(*sb0, f);
+        repeat_string(" ", align_pos - f.count, *sb0);
+        append(*sb0, " = xx vkGetInstanceProcAddr(null, \"");
+        append(*sb0, f);
+        append(*sb0, "\");\n");
+    }
+    append(*sb0, "}\n\n");
 
-    // The way we decide where to put our function is by its param, if
-    // it takes a VkDevice, it is a device function. If it takes a
-    // VkInstance or VkPhysicalDevice, it is an instance function. If
-    // it takes neither of them, it is a global one.
+    append(*sb0, "vk_load_instance_functions :: (instance: VkInstance) {\n");
+    align_pos = longest_string(instance_func);
+    for f : instance_func {
+        append(*sb0, "    ");
+        append(*sb0, f);
+        repeat_string(" ", align_pos - f.count, *sb0);
+        append(*sb0, " = xx vkGetInstanceProcAddr(instance, \"");
+        append(*sb0, f);
+        append(*sb0, "\");\n");
+    }
+    append(*sb0, "}\n\n");
+
+    append(*sb0, "vk_load_device_functions :: (device: VkDevice) {\n");
+    align_pos = longest_string(device_func);
+    for f : device_func {
+        append(*sb0, "    ");
+        append(*sb0, f);
+        repeat_string(" ", align_pos - f.count, *sb0);
+        append(*sb0, " = xx vkGetDeviceProcAddr(device, \"");
+        append(*sb0, f);
+        append(*sb0, "\");\n");
+    }
+    append(*sb0, "}\n");
 
     // Maybe in the future I will just generate to functions.jai
     write_entire_file("dynamic_functions.jai", *sb);
     write_entire_file("dynamic_loader.jai", *sb0);
 }
 
-write_pointers :: (count: int, sb: *String_Builder) {
+repeat_string :: (s: string, count: int, sb: *String_Builder) {
     n := count;
     while n > 0 {
-        append(sb, "*");
+        append(sb, s);
         n -= 1;
+    }
+}
+
+write_pointers :: (count: int, sb: *String_Builder) {
+    repeat_string("*", count, sb);
+}
+
+longest_string :: (ss: []string) -> int {
+    n : int;
+    for s : ss {
+        if s.count > n {
+            n = s.count;
+        }
+    }
+
+    return n;
+}
+
+is_upper :: (byte: u8) -> bool {
+    if byte >= #char "A" && byte <= #char "Z" return true;
+    return false;
+}
+
+// This function is directly stolen from Vulkan binding in Jai,
+// slightly modified for Vulkan 1.4 or later.
+get_sType_default_value_from_struct_name :: (name: string) -> string {
+    assert(name.count >= 3);
+
+    is_num :: (byte: u8) -> bool {
+        if byte >= #char "0" && byte <= #char "9" return true;
+        return false;
+    }
+
+    builder: String_Builder;
+    append(*builder, name[2]);
+    for i:3..name.count-1 {
+        if is_upper(name[i]) {
+            is_first_uppercase := !is_upper(name[i-1]);
+            is_end_of_uppercase_word := (i != name.count-1 && !is_upper(name[i+1]));
+            is_bit_count := is_num(name[i-1]) && slice(name, i, 3) == "Bit";
+            if (is_first_uppercase || is_end_of_uppercase_word) && !is_bit_count {
+                append(*builder, #char "_");
+            } else if (i >= 4 && slice(name, i-4, 4) == "AABB") { // Special case hack for names involing AABB
+                append(*builder, #char "_");
+            }
+            append(*builder, name[i]);
+        } else if is_num(name[i]) {
+            if !is_num(name[i-1]) {
+                append(*builder, #char "_");
+            }
+            append(*builder, name[i]);
+        } else {
+            append(*builder, to_upper(name[i]));
+        }
+    }
+
+    type_string := builder_to_string(*builder);
+
+    // This is a fucking mess because it makes too many stupid
+    // allocations. Don't bother to fix it.
+    type_string = replace(type_string, "PHYSICAL_DEVICE_VULKAN_1", "PHYSICAL_DEVICE_VULKAN_1_");
+    type_string = replace(type_string, "_INT_64_", "_INT64_");
+    type_string = replace(type_string, "_INT_8_", "_INT8_");
+    type_string = replace(type_string, "_UINT_8_", "_UINT8_");
+    type_string = replace(type_string, "_FLOAT_16_", "_FLOAT16_");
+    type_string = replace(type_string, "_FLOAT_8_", "_FLOAT8_");
+    type_string = replace(type_string, "_BFLOAT_16_", "_BFLOAT16_");
+    type_string = replace(type_string, "_ASTCHDR_", "_ASTC_HDR_");
+    type_string = replace(type_string, "_H_264_", "_H264_");
+    type_string = replace(type_string, "_H_265_", "_H265_");
+    type_string = replace(type_string, "_A_V_1_", "_AV1_");
+    type_string = replace(type_string, "_V_P_9_", "_VP9_");
+    type_string = replace(type_string, "_RGB_A_10_X_6_", "_RGBA10X6_");
+    type_string = replace(type_string, "_2_D_", "_2D_");
+    type_string = replace(type_string, "_3_D_", "_3D_");
+
+    return type_string;
+}
+
+pascal_to_screaming_snake :: (s: string) -> string {
+    is_beginning := true;
+
+    sb: String_Builder;
+    for c : s {
+        if is_upper(c) {
+            if is_beginning {
+                is_beginning = false;
+            } else {
+                append(*sb, _);
+            }
+            append(*sb, c);
+        } else {
+            append(*sb, to_upper(c));
+        }
     }
 }
 
