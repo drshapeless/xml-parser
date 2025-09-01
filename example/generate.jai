@@ -109,10 +109,11 @@ VK_Enum :: struct {
 
 // Same as enum member, standalone comment is store in name.
 VK_Enum_Flags_Member :: struct {
-    name   : string;
-    value  : string;
-    bitpos : string;
-    alias  : string;
+    name    : string;
+    value   : string;
+    bitpos  : string;
+    alias   : string;
+    comment : string;
 }
 
 VK_Enum_Flags :: struct {
@@ -382,8 +383,7 @@ handle_enum_enum :: (node: Node) {
 
             vk_member.comment = get_attr(member_node, "comment");
         } else if member_node.tag_name == "comment" {
-            // If this is a standalone comment, we put it as a name.
-            vk_member.name = member_node.inner_string;
+            vk_member.comment = member_node.inner_string;
         }
 
         array_add(*members, vk_member);
@@ -415,8 +415,7 @@ handle_enum_bitmask :: (node: Node) {
             member.bitpos = get_attr(member_node, "bitpos");
             member.alias  = get_attr(member_node, "alias");
         } else if member_node.tag_name == "comment" {
-            // Same, if the member is a comment tag, put it in the name.
-            member.name = member_node.inner_string;
+            member.comment = member_node.inner_string;
         }
 
         array_add(*members, member);
@@ -795,27 +794,30 @@ output_enums :: () {
         } else {
             append(*sb, "enum {\n");
             for m : e.members {
-                append(*sb, "    ");
-                if m.alias.count > 0 {
-                    append(*sb, m.name);
+                if m.name.count > 0 {
+                    append(*sb, "    ");
+                    append(*sb, strip_enum_member_name(m.name, e.name));
                     append(*sb, " :: ");
-                    append(*sb, m.alias);
-                    append(*sb, ";");
-                } else if m.value.count > 0 {
-                    append(*sb, m.name);
-                    append(*sb, " :: ");
-                    append(*sb, m.value);
-                    append(*sb, ";");
-                } else {
-                    append(*sb, "/* ");
-                    append(*sb, m.name);
-                    append(*sb, " */");
+                    if m.alias.count > 0 {
+                        // alias refers to some valid member, fix it also.
+                        append(*sb, strip_enum_member_name(m.alias, e.name));
+                        append(*sb, ";");
+                    } else if m.value.count > 0 {
+                        append(*sb, m.value);
+                        append(*sb, ";");
+                    }
                 }
 
                 if m.comment.count > 0 {
-                    append(*sb, " /*");
-                    append(*sb, m.comment);
-                    append(*sb, " */");
+                    if m.name.count > 0 {
+                        append(*sb, " /* ");
+                        append(*sb, m.comment);
+                        append(*sb, " */");
+                    } else {
+                        append(*sb, "/*\n");
+                        append(*sb, m.comment);
+                        append(*sb, "\n*/");
+                    }
                 }
 
                 append(*sb, "\n");
@@ -837,27 +839,29 @@ output_enum_flags :: () {
         append(*sb, " {\n");
 
         for m : e.members {
-            append(*sb, "    ");
-            if m.value.count > 0 {
-                append(*sb, m.name);
+            if m.name.count > 0 {
+                append(*sb, "    ");
+                append(*sb, strip_enum_flag_bits(m.name, e.name));
                 append(*sb, " :: ");
-                append(*sb, m.value);
-                append(*sb, ";");
-            } else if m.bitpos.count > 0 {
-                append(*sb, m.name);
-                append(*sb, " :: ");
-                append(*sb, "1 << ");
-                append(*sb, m.bitpos);
-                append(*sb, ";");
-            } else if m.alias.count > 0 {
-                append(*sb, m.name);
-                append(*sb, " :: ");
-                append(*sb, m.alias);
-                append(*sb, ";");
-            } else {
-                append(*sb, "/* ");
-                append(*sb, m.name);
-                append(*sb, " */");
+                if m.value.count > 0 {
+                    append(*sb, m.value);
+                    append(*sb, ";");
+                } else if m.bitpos.count > 0 {
+                    append(*sb, "1 << ");
+                    append(*sb, m.bitpos);
+                    append(*sb, ";");
+                } else if m.alias.count > 0 {
+                    append(*sb, strip_enum_flag_bits(m.alias, e.name));
+                    append(*sb, ";");
+                }
+            }
+
+            // There will not be a trailing comment after a enum_flags
+            // member.
+            if m.comment.count > 0 {
+                append(*sb, "/*\n");
+                append(*sb, m.comment);
+                append(*sb, "\n*/");
             }
 
             append(*sb, "\n");
@@ -1059,7 +1063,8 @@ get_sType_default_value_from_struct_name :: (name: string) -> string {
     type_string := builder_to_string(*builder);
 
     // This is a fucking mess because it makes too many stupid
-    // allocations. Don't bother to fix it.
+    // allocations. Don't bother to fix it. But seems like replace()
+    // does not allcate new memory if the target string is not found.
     type_string = replace(type_string, "PHYSICAL_DEVICE_VULKAN_1", "PHYSICAL_DEVICE_VULKAN_1_");
     type_string = replace(type_string, "_INT_64_", "_INT64_");
     type_string = replace(type_string, "_INT_8_", "_INT8_");
@@ -1083,18 +1088,144 @@ pascal_to_screaming_snake :: (s: string) -> string {
     is_beginning := true;
 
     sb: String_Builder;
-    for c : s {
+    for c, index : s {
         if is_upper(c) {
             if is_beginning {
                 is_beginning = false;
+            } else if c == #char "V" && s[index - 1] == #char "A" {
+                // do nothing
             } else {
-                append(*sb, _);
+                append(*sb, "_");
             }
             append(*sb, c);
         } else {
             append(*sb, to_upper(c));
         }
     }
+
+    return builder_to_string(*sb);
+}
+
+VULKAN_SUFFIX :: string.[
+"KHR",
+"EXT",
+"LUNARG",
+"NV",
+"AMD",
+"INTEL",
+"ARM",
+"QCOM",
+];
+
+check_vendor_suffix :: (s: string) -> string {
+    for suf : VULKAN_SUFFIX {
+        if ends_with(s, suf) {
+            return suf;
+        }
+    }
+
+    return "";
+}
+
+strip_enum_member_name :: (member_name: string, enum_name: string) -> string {
+    name := member_name;
+    ename := enum_name;
+
+    // This can be implemented as builtin remove(), however I don't
+    // want to allocate more memory.
+    esuffix := check_vendor_suffix(enum_name);
+    ename = remove_right(ename, esuffix);
+
+    prefix := pascal_to_screaming_snake(ename);
+    found := false;
+    name, found = remove_left(name, prefix);
+
+    // Remove leading _
+    if found {
+        name.data += 1;
+        name.count -= 1;
+    }
+
+    suffix := check_vendor_suffix(name);
+    name, found = remove_right(name, suffix);
+    // Remove trailing _
+    if found {
+        name.count -= 1;
+    }
+
+    // Prefix a E in front of a digit beginning name.
+    // This is ugly, I am thinking of a better way to deal with this.
+    if is_digit(name[0]) {
+        name = sprint("E%", name);
+    }
+
+    return name;
+}
+
+strip_enum_flag_bits :: (member_name: string, enum_name: string) -> string {
+    // Vulkan flag bits suck, this is almost the identical copy of
+    // strip_enum_member_name(), but with some extra rules. I am too
+    // lazy to extract their common procedures.
+
+    // For the enum type, it is suffixed with FlagBits, but for its
+    // member, it is suffixed with BIT. And on top of that, the enum
+    // is also suffixed with vendor names like NV.
+
+    name := member_name;
+    ename := enum_name;
+
+    esuffix := check_vendor_suffix(enum_name);
+    ename = remove_right(ename, esuffix);
+    ename = remove_right(ename, "FlagBits");
+
+    found := false;
+    prefix := pascal_to_screaming_snake(ename);
+    name, found = remove_left(name, prefix);
+    // Remove leading _
+    if found {
+        name.data += 1;
+        name.count -= 1;
+    }
+
+    suffix := check_vendor_suffix(enum_name);
+    name, found = remove_right(name, suffix);
+    // Remove trailing _
+    if found {
+        name.count -= 1;
+    }
+
+    name = remove_right(name, "_BIT");
+
+    if is_digit(name[0]) {
+        name = sprint("E%", name);
+    }
+
+    return name;
+}
+
+// Remove the leading string, it does not allocate memory
+remove_left :: (s: string, target: string) -> string, found:bool {
+    if target.count > 0 && s.count >= target.count {
+        sub := slice(s, 0, target.count);
+        if sub == target {
+            return slice(s, target.count, s.count - target.count), true;
+        }
+    }
+
+    return s, false;
+}
+
+
+// Remove the trailing string, it does not allocate memory
+remove_right :: (s: string, target: string) -> string, found:bool {
+    if target.count > 0 && s.count >= target.count {
+        sub := slice(s, s.count - target.count, target.count);
+        if sub == target {
+            return slice(s, 0, s.count - target.count), true;
+        }
+    }
+
+    return s, false;
 }
 
 #import,file "../module.jai";
