@@ -1115,6 +1115,9 @@ VULKAN_SUFFIX :: string.[
 "INTEL",
 "ARM",
 "QCOM",
+"FUCHSIA",
+"MSFT",
+"ANDROID",
 ];
 
 check_vendor_suffix :: (s: string) -> string {
@@ -1137,6 +1140,10 @@ strip_enum_member_name :: (member_name: string, enum_name: string) -> string {
     ename = remove_right(ename, esuffix);
 
     prefix := pascal_to_screaming_snake(ename);
+    if enum_name == "VkResult" {
+        // Hard code VkResult prefix, why? It sucks.
+        prefix = "VK";
+    }
     found := false;
     name, found = remove_left(name, prefix);
 
@@ -1176,10 +1183,22 @@ strip_enum_flag_bits :: (member_name: string, enum_name: string) -> string {
 
     esuffix := check_vendor_suffix(enum_name);
     ename = remove_right(ename, esuffix);
+
+    // There are some ridiculous naming like VkAccessFlagBits2 and its
+    // member is VK_ACCESS_2_NONE, dealing with it.
+    is_trailing_digit := false;
+    if is_digit(enum_name[enum_name.count - 1]) {
+        is_trailing_digit = true;
+        ename.count -= 1;
+    }
+
     ename = remove_right(ename, "FlagBits");
 
     found := false;
     prefix := pascal_to_screaming_snake(ename);
+    if is_trailing_digit {
+        prefix = tprint("%_%", prefix, slice(enum_name, enum_name.count - 1, 1));
+    }
     name, found = remove_left(name, prefix);
     // Remove leading _
     if found {
@@ -1200,6 +1219,7 @@ strip_enum_flag_bits :: (member_name: string, enum_name: string) -> string {
         name = sprint("E%", name);
     }
 
+    reset_temporary_storage();
     return name;
 }
 
