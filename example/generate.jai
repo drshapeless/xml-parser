@@ -67,6 +67,7 @@ VK_Structure_Member :: struct {
     type              : string;
     bitmask           : int;
     comment           : string;
+    default_value     : string;
 }
 
 VK_Structure :: struct {
@@ -139,6 +140,10 @@ generation_loop :: (root_node: Node) {
             handle_enums(root_child);
         case "commands";
             handle_commands(root_child);
+        case "extensions";
+            handle_extensions(root_child);
+        case "feature";
+            handle_feature(root_child);
         }
     }
 }
@@ -488,6 +493,37 @@ handle_commands :: (parent: Node) {
         }
         array_add(*vk_functions, command);
     }
+}
+
+handle_extensions :: (parent: Node) {
+    // Handling extensions is a nightmare because it extends the
+    // original enum, meaning that we have to look through the whole
+    // enum array and find the one we want. At this point I am
+    // considering to use a hash table to store all the enum.
+
+    // This function is almost guarantee to be slow as hell.
+
+    // These are the formula to calculate the value, only VkResult
+    // uses negative.
+    //
+    // Positive values: 1000000000 + (extnumber - 1) * 1000 + offset
+    // Negative values: -1000000000 - (extnumber - 1) * 1000 - offset
+
+
+    for extension_node : parent.children {
+        extnumber, ok := string_to_int(get_attr(extension_node, "number"));
+        assert(ok);
+
+        for require_node : extension_node.children {
+            if require_node.tag_name != "require" {
+                log("This is not require, %", require_node.tag_name);
+            }
+        }
+    }
+}
+
+handle_feature :: (parent: Node) {
+    log("feature name is %", get_attr(parent, "name"));
 }
 
 is_vulkansc :: (node: Node) -> bool {
@@ -861,12 +897,16 @@ output_enum_flags :: () {
                 }
             }
 
-            // There will not be a trailing comment after a enum_flags
-            // member.
             if m.comment.count > 0 {
-                append(*sb, "/*\n");
-                append(*sb, m.comment);
-                append(*sb, "\n*/");
+                if m.name.count > 0 {
+                    append(*sb, " /* ");
+                    append(*sb, m.comment);
+                    append(*sb, " */");
+                } else {
+                    append(*sb, "/*\n");
+                    append(*sb, m.comment);
+                    append(*sb, "\n*/");
+                }
             }
 
             append(*sb, "\n");
