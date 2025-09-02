@@ -22,6 +22,8 @@ vk_enums             : [..]VK_Enum;
 vk_enum_flags        : [..]VK_Enum_Flags;
 vk_constants         : [..]VK_Constant;
 
+vk_vendors : [..]string;
+
 generate :: () {
     source_string, ok := read_entire_file("vk.xml");
     if !ok {
@@ -134,6 +136,8 @@ VK_Constant :: struct {
 generation_loop :: (root_node: Node) {
     for root_child : root_node.children {
         if root_child.tag_name == {
+        case "tags";
+            handle_tags(root_child);
         case "types";
             handle_types(root_child);
         case "enums";
@@ -145,6 +149,13 @@ generation_loop :: (root_node: Node) {
         case "feature";
             handle_feature(root_child);
         }
+    }
+}
+
+handle_tags :: (parent: Node) {
+    for tag_node : parent.children {
+        name := get_attr(tag_node, "name");
+        array_add(*vk_vendors, name);
     }
 }
 
@@ -311,6 +322,11 @@ handle_struct :: (node: Node) {
                             vk_member.array_prefix = sprint("[%]", member_child.inner_string);
                         case "name";
                             vk_member.name = member_child.inner_string;
+                            if vk_member.name == "sType" {
+                                default_sType_value := get_attr(member_node, "values");
+                                assert(default_sType_value.count > 0);
+                                vk_member.default_value = default_sType_value;
+                            }
                         }
                     } else {
                         s := trim(member_child.raw_string);
@@ -495,6 +511,14 @@ handle_commands :: (parent: Node) {
     }
 }
 
+extended_enum_value :: (extnumber: int, offset: int, positive := true) -> int {
+    if positive {
+        return 1000000000 + (extnumber - 1) * 1000 + offset;
+    } else {
+        return -1000000000 - (extnumber - 1) * 1000 - offset;
+    }
+}
+
 handle_extensions :: (parent: Node) {
     // Handling extensions is a nightmare because it extends the
     // original enum, meaning that we have to look through the whole
@@ -522,8 +546,61 @@ handle_extensions :: (parent: Node) {
     }
 }
 
+find_vk_enum :: (name: string) -> index:int {
+    // Because vk_enums is a dynamic array, it is not safe to return a
+    // pointer.
+
+    for e, i : vk_enums {
+        if e.name == name {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 handle_feature :: (parent: Node) {
-    log("feature name is %", get_attr(parent, "name"));
+    feature_number := get_attr(parent, "name");
+
+    if feature_number == "1.0" || is_vulkansc(parent) {
+        return;
+    }
+
+    for require_node : parent.children {
+        if require_node.tag_name != "require" {
+            continue;
+        }
+
+        for m : require_node.children {
+            if m.tag_name == {
+            case "type";
+                #through;
+            case "command";
+                continue;
+            case "enum";
+                extends   := get_attr(m, "extends");
+                extnumber := get_attr(m, "extnumber");
+                offset    := get_attr(m, "offset");
+                name      := get_attr(m, "name");
+                bitpos    := get_attr(m, "bitpos");
+                if bitpos.count > 0 {
+
+                } else {
+                    // find the VK_Enum
+                    vk_enum_index := find_vk_enum(name);
+                    assert(vk_enum_index >= 0);
+
+                    // TODO: Not finished
+                    member := VK_Enum_Member.{
+                        name = name,
+
+                    };
+
+                    array_add(*vk_enums[vk_enum_index].members, )
+                }
+            }
+        }
+    }
 }
 
 is_vulkansc :: (node: Node) -> bool {
@@ -1151,22 +1228,8 @@ pascal_to_screaming_snake :: (s: string) -> string {
     return builder_to_string(*sb);
 }
 
-VULKAN_SUFFIX :: string.[
-"KHR",
-"EXT",
-"LUNARG",
-"NV",
-"AMD",
-"INTEL",
-"ARM",
-"QCOM",
-"FUCHSIA",
-"MSFT",
-"ANDROID",
-];
-
 check_vendor_suffix :: (s: string) -> string {
-    for suf : VULKAN_SUFFIX {
+    for suf : vk_vendors {
         if ends_with(s, suf) {
             return suf;
         }
@@ -1191,18 +1254,19 @@ strip_enum_member_name :: (member_name: string, enum_name: string) -> string {
     }
     found := false;
     name, found = remove_left(name, prefix);
-
     // Remove leading _
     if found {
         name.data += 1;
         name.count -= 1;
     }
 
-    suffix := check_vendor_suffix(name);
-    name, found = remove_right(name, suffix);
-    // Remove trailing _
-    if found {
-        name.count -= 1;
+    if enum_name != "VkVendorId" {
+        suffix := check_vendor_suffix(name);
+        name, found = remove_right(name, suffix);
+        // Remove trailing _
+        if found {
+            name.count -= 1;
+        }
     }
 
     // Prefix a E in front of a digit beginning name.
