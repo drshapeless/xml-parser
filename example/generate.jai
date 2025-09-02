@@ -47,6 +47,7 @@ generate :: () {
         output_functions();
     }
 
+    output_module();
 
     at = current_time_monotonic();
     end_time := to_float64_seconds(at);
@@ -1246,6 +1247,66 @@ remove_right :: (s: string, target: string) -> string, found:bool {
     }
 
     return s, false;
+}
+
+
+// Some of them are stolen from original Vulkan binding.
+MODULE_COMMON_STRING :: #string DONE
+VK_NULL_HANDLE :: null;
+
+// These defines are deprecated by vulkan 1.2:
+VK_MAKE_VERSION :: (major: u32, minor: u32, patch: u32) -> u32 {
+    return (major << 22) | (minor << 12) | patch;
+}
+VK_VERSION_MAJOR :: (version: u32) -> u32 { return version >> 22; }
+VK_VERSION_MINOR :: (version: u32) -> u32 { return (version >> 12) & 0x3ff; }
+VK_VERSION_PATCH :: (version: u32) -> u32 { return version & 0xfff; }
+
+VK_API_VERSION_1_0 :: #run VK_MAKE_VERSION(1, 0, 0);
+VK_API_VERSION_1_1 :: #run VK_MAKE_VERSION(1, 1, 0);
+VK_API_VERSION_1_2 :: #run VK_MAKE_VERSION(1, 2, 0);
+VK_API_VERSION_1_3 :: #run VK_MAKE_VERSION(1, 3, 0);
+VK_API_VERSION_1_4 :: #run VK_MAKE_VERSION(1, 4, 0);
+
+// These are the new versions:
+VK_MAKE_API_VERSION :: (variant:u32, major: u32, minor: u32, patch: u32) -> u32 {
+    return (variant << 29) | (major << 22) | (minor << 12) | patch;
+}
+
+VK_API_VERSION_VARIANT :: (version: u32) -> u32 { return (version >> 29); }
+VK_API_VERSION_MAJOR   :: (version: u32) -> u32 { return (version >> 22) & 0x3ff; }
+VK_API_VERSION_MINOR   :: (version: u32) -> u32 { return (version >> 12) & 0x3ff; }
+VK_API_VERSION_PATCH   :: (version: u32) -> u32 { return version & 0xfff; }
+
+#load "constants.jai";
+#load "structures.jai";
+#load "enums.jai";
+#load "enum_flags.jai";
+#load "types.jai";
+#load "function_pointers.jai";
+DONE
+
+MODULE_DYNAMIC_STRING :: #string DONE
+#load "dynamic_functions.jai";
+#load "dynamic_loader.jai";
+DONE
+
+MODULE_NON_DYNAMIC_STRING :: #string DONE
+#load "functions.jai";
+DONE
+
+output_module :: () {
+    sb: String_Builder;
+
+    append(*sb, MODULE_COMMON_STRING);
+
+    #if DYNAMIC_LOADER {
+        append(*sb, MODULE_DYNAMIC_STRING);
+    } else {
+        append(*sb, MODULE_NON_DYNAMIC_STRING);
+    }
+
+    write_entire_file("module.jai", *sb);
 }
 
 #import,file "../module.jai";
