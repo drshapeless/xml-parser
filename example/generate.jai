@@ -793,7 +793,11 @@ output_enums :: () {
             append(*sb, e.alias);
             append(*sb, ";\n\n");
         } else {
-            append(*sb, "enum {\n");
+            if e.name == "VkResult" {
+                append(*sb, "enum s32 {\n");
+            } else {
+                append(*sb, "enum u32 {\n");
+            }
             for m : e.members {
                 if m.name.count > 0 {
                     append(*sb, "    ");
