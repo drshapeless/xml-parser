@@ -19,7 +19,6 @@ vk_structures        : [..]VK_Structure;
 vk_functions         : [..]VK_Function;
 vk_function_pointers : [..]VK_Function_Pointer;
 vk_enums             : [..]VK_Enum;
-vk_enum_flags        : [..]VK_Enum_Flags;
 vk_constants         : [..]VK_Constant;
 
 vk_vendors : [..]string;
@@ -41,7 +40,6 @@ generate :: () {
     output_structures();
     output_function_pointers();
     output_enums();
-    output_enum_flags();
     output_constants();
     if DYNAMIC_LOADER {
         output_dynamic_functions();
@@ -102,28 +100,16 @@ VK_Enum_Member :: struct {
     name    : string;
     alias   : string;
     value   : string;
+    bitpos  : string;
     comment : string;
 }
 
 VK_Enum :: struct {
-    name    : string;
-    alias   : string;
-    members : [..]VK_Enum_Member;
-}
-
-// Same as enum member, standalone comment is store in name.
-VK_Enum_Flags_Member :: struct {
-    name    : string;
-    value   : string;
-    bitpos  : string;
-    alias   : string;
-    comment : string;
-}
-
-VK_Enum_Flags :: struct {
-    name    : string;
-    type    : string;
-    members : [..]VK_Enum_Flags_Member;
+    name          : string;
+    alias         : string;
+    type          : string;
+    members       : [..]VK_Enum_Member;
+    is_enum_flags : bool;
 }
 
 VK_Constant :: struct {
@@ -358,9 +344,9 @@ handle_enums :: (parent: Node) {
     case "constants";
         handle_enum_constants(parent);
     case "enum";
-        handle_enum_enum(parent);
+        handle_enum(parent, false);
     case "bitmask";
-        handle_enum_bitmask(parent);
+        handle_enum(parent, true);
     case;
         assert(false, "unhandled enum");
     }
@@ -384,66 +370,41 @@ handle_enum_constants :: (node: Node) {
     }
 }
 
-// Another cursed name
-handle_enum_enum :: (node: Node) {
-    using vk_enum : VK_Enum;
+handle_enum :: (node: Node, is_bitmask: bool) {
+    e : VK_Enum;
 
-    name = get_attr(node, "name");
+    e.name = get_attr(node, "name");
+    assert(e.name.count > 0);
+    e.is_enum_flags = is_bitmask;
 
-    for member_node : node.children {
-        vk_member : VK_Enum_Member;
-        if member_node.tag_name == "enum" {
-            vk_member.name = get_attr(member_node, "name");
-            assert(vk_member.name.count > 0);
-
-            vk_member.value = get_attr(member_node, "value");
-
-            if vk_member.value.count == 0 {
-                vk_member.alias = get_attr(member_node, "alias");
-                assert(vk_member.alias.count > 0);
-            }
-
-            vk_member.comment = get_attr(member_node, "comment");
-        } else if member_node.tag_name == "comment" {
-            vk_member.comment = member_node.inner_string;
+    if is_bitmask {
+        bitwidth := get_attr(node, "bitwidth");
+        if bitwidth == "64" {
+            e.type = "u64";
+        } else {
+            e.type = "u32";
         }
-
-        array_add(*members, vk_member);
-    }
-
-    array_add(*vk_enums, vk_enum);
-}
-
-handle_enum_bitmask :: (node: Node) {
-    using enum_flag : VK_Enum_Flags;
-
-    name = get_attr(node, "name");
-    assert(name.count > 0);
-
-    bitwidth := get_attr(node, "bitwidth");
-    if bitwidth == "64" {
-        type = "u64";
-    } else {
-        type = "u32";
     }
 
     for member_node : node.children {
-        member : VK_Enum_Flags_Member;
+        m : VK_Enum_Member;
         if member_node.tag_name == "enum" {
-            member.name = get_attr(member_node, "name");
-            assert(member.name.count > 0);
+            m.name = get_attr(member_node, "name");
+            assert(m.name.count > 0);
 
-            member.value  = get_attr(member_node, "value");
-            member.bitpos = get_attr(member_node, "bitpos");
-            member.alias  = get_attr(member_node, "alias");
+            m.value  = get_attr(member_node, "value");
+            m.bitpos = get_attr(member_node, "bitpos");
+            m.alias  = get_attr(member_node, "alias");
+
+            m.comment = get_attr(member_node, "comment");
         } else if member_node.tag_name == "comment" {
-            member.comment = member_node.inner_string;
+            m.comment = member_node.inner_string;
         }
 
-        array_add(*members, member);
+        array_add(*e.members, m);
     }
 
-    array_add(*vk_enum_flags, enum_flag);
+    array_add(*vk_enums, e);
 }
 
 handle_commands :: (parent: Node) {
@@ -520,14 +481,24 @@ extended_enum_value :: (extnumber: int, offset: int, positive := true) -> int {
 }
 
 // This is an override version that takes a string instead
-extended_enum_value :: (extnumber: string, offset: string, positive := true) -> int {
+extended_enum_value :: (extnumber: string, offset: string, positive := true) -> int, success:bool {
+    // These are the formula to calculate the value, only VkResult
+    // uses negative.
+    //
+    // Positive values: 1000000000 + (extnumber - 1) * 1000 + offset
+    // Negative values: -1000000000 - (extnumber - 1) * 1000 - offset
+
     en, ok0 := string_to_int(extnumber);
-    assert(ok0);
+    if !ok0 {
+        return 0, false;
+    }
 
     of, ok1 := string_to_int(offset);
-    assert(ok1);
+    if !ok1 {
+        return 0, false;
+    }
 
-    return extended_enum_value(en, of, positive);
+    return extended_enum_value(en, of, positive), true;
 }
 
 handle_extensions :: (parent: Node) {
@@ -537,13 +508,6 @@ handle_extensions :: (parent: Node) {
     // considering to use a hash table to store all the enum.
 
     // This function is almost guarantee to be slow as hell.
-
-    // These are the formula to calculate the value, only VkResult
-    // uses negative.
-    //
-    // Positive values: 1000000000 + (extnumber - 1) * 1000 + offset
-    // Negative values: -1000000000 - (extnumber - 1) * 1000 - offset
-
 
     for extension_node : parent.children {
         extnumber, ok := string_to_int(get_attr(extension_node, "number"));
@@ -562,16 +526,6 @@ find_vk_enum :: (name: string) -> index:int {
     // pointer.
 
     for e, i : vk_enums {
-        if e.name == name {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-find_vk_enum_flags :: (name: string) -> index:int {
-    for e, i : vk_enum_flags {
         if e.name == name {
             return i;
         }
@@ -600,6 +554,9 @@ handle_feature :: (parent: Node) {
                 continue;
             case "enum";
                 extends   := get_attr(m, "extends");
+                if extends.count == 0 {
+                    continue;
+                }
                 extnumber := get_attr(m, "extnumber");
                 offset    := get_attr(m, "offset");
                 name      := get_attr(m, "name");
@@ -607,39 +564,31 @@ handle_feature :: (parent: Node) {
                 dir       := get_attr(m, "dir");
                 alias     := get_attr(m, "alias");
                 comment   := get_attr(m, "comment");
+                value     := get_attr(m, "value");
                 is_positive := true;
                 if dir == "-" {
                     is_positive = false;
-                };
-
-                if alias.count > 0 {
-                    // If it is an alias, we can only deduce whether
-                    // it is a enum or enum_flags by name, which
-                    // sucks.
                 }
 
+                vk_enum_index := find_vk_enum(extends);
+                assert(vk_enum_index >= 0, "%", m.raw_string);
+                member : VK_Enum_Member;
+                member.name = name;
+                member.comment = comment;
 
                 if bitpos.count > 0 {
-                    eindex := find_vk_enum_flags(extends);
-                    assert(eindex >= 0);
-
-
-
+                    member.bitpos = bitpos;
+                } else if alias.count > 0 {
+                    member.alias = alias;
+                } else if value.count > 0 {
+                    member.value = value;
                 } else {
-                    // find the VK_Enum
-                    vk_enum_index := find_vk_enum(extends);
-                    assert(vk_enum_index >= 0, "%", m.raw_string);
-
-                    // TODO: Not finished
-                    member := VK_Enum_Member.{
-                        name = name,
-                        value = sprint("%", extended_enum_value(extnumber, offset, is_positive)),
-                        comment = comment,
-                    };
-
-                    array_add(*vk_enums[vk_enum_index].members, member);
+                    v, ok := extended_enum_value(extnumber, offset, is_positive);
+                    assert(ok, "%", m.raw_string);
+                    member.value = sprint("%", v);
                 }
 
+                array_add(*vk_enums[vk_enum_index].members, member);
             }
         }
     }
@@ -949,22 +898,33 @@ output_enums :: () {
             append(*sb, e.alias);
             append(*sb, ";\n\n");
         } else {
-            if e.name == "VkResult" {
-                append(*sb, "enum s32 {\n");
+            if e.is_enum_flags {
+                append(*sb, "enum_flags ");
+                append(*sb, e.type);
+                append(*sb, " {\n");
             } else {
-                append(*sb, "enum u32 {\n");
+                if e.name == "VkResult" {
+                    append(*sb, "enum s32 {\n");
+                } else {
+                    append(*sb, "enum u32 {\n");
+                }
             }
+
             for m : e.members {
                 if m.name.count > 0 {
                     append(*sb, "    ");
-                    append(*sb, strip_enum_member_name(m.name, e.name));
+                    append(*sb, strip_enum_member_name(m.name, e.name, e.is_enum_flags));
                     append(*sb, " :: ");
-                    if m.alias.count > 0 {
-                        // alias refers to some valid member, fix it also.
-                        append(*sb, strip_enum_member_name(m.alias, e.name));
-                        append(*sb, ";");
-                    } else if m.value.count > 0 {
+                    if m.value.count > 0 {
                         append(*sb, m.value);
+                        append(*sb, ";");
+                    } else if m.bitpos.count > 0 {
+                        assert(e.is_enum_flags == true);
+                        append(*sb, "1 << ");
+                        append(*sb, m.bitpos);
+                        append(*sb, ";");
+                    } else if m.alias.count > 0 {
+                        append(*sb, strip_enum_member_name(m.alias, e.name, e.is_enum_flags));
                         append(*sb, ";");
                     }
                 }
@@ -988,54 +948,6 @@ output_enums :: () {
     }
 
     write_entire_file("enums.jai", *sb);
-}
-
-output_enum_flags :: () {
-    sb: String_Builder;
-
-    for e : vk_enum_flags {
-        append(*sb, e.name);
-        append(*sb, " :: enum_flags ");
-        append(*sb, e.type);
-        append(*sb, " {\n");
-
-        for m : e.members {
-            if m.name.count > 0 {
-                append(*sb, "    ");
-                append(*sb, strip_enum_flag_bits(m.name, e.name));
-                append(*sb, " :: ");
-                if m.value.count > 0 {
-                    append(*sb, m.value);
-                    append(*sb, ";");
-                } else if m.bitpos.count > 0 {
-                    append(*sb, "1 << ");
-                    append(*sb, m.bitpos);
-                    append(*sb, ";");
-                } else if m.alias.count > 0 {
-                    append(*sb, strip_enum_flag_bits(m.alias, e.name));
-                    append(*sb, ";");
-                }
-            }
-
-            if m.comment.count > 0 {
-                if m.name.count > 0 {
-                    append(*sb, " /* ");
-                    append(*sb, m.comment);
-                    append(*sb, " */");
-                } else {
-                    append(*sb, "/*\n");
-                    append(*sb, m.comment);
-                    append(*sb, "\n*/");
-                }
-            }
-
-            append(*sb, "\n");
-        }
-
-        append(*sb, "}\n\n");
-    }
-
-    write_entire_file("enum_flags.jai", *sb);
 }
 
 output_constants :: () {
@@ -1192,63 +1104,6 @@ is_upper :: (byte: u8) -> bool {
     return false;
 }
 
-// This function is directly stolen from Vulkan binding in Jai,
-// slightly modified for Vulkan 1.4 or later.
-get_sType_default_value_from_struct_name :: (name: string) -> string {
-    assert(name.count >= 3);
-
-    is_num :: (byte: u8) -> bool {
-        if byte >= #char "0" && byte <= #char "9" return true;
-        return false;
-    }
-
-    builder: String_Builder;
-    append(*builder, name[2]);
-    for i:3..name.count-1 {
-        if is_upper(name[i]) {
-            is_first_uppercase := !is_upper(name[i-1]);
-            is_end_of_uppercase_word := (i != name.count-1 && !is_upper(name[i+1]));
-            is_bit_count := is_num(name[i-1]) && slice(name, i, 3) == "Bit";
-            if (is_first_uppercase || is_end_of_uppercase_word) && !is_bit_count {
-                append(*builder, #char "_");
-            } else if (i >= 4 && slice(name, i-4, 4) == "AABB") { // Special case hack for names involing AABB
-                append(*builder, #char "_");
-            }
-            append(*builder, name[i]);
-        } else if is_num(name[i]) {
-            if !is_num(name[i-1]) {
-                append(*builder, #char "_");
-            }
-            append(*builder, name[i]);
-        } else {
-            append(*builder, to_upper(name[i]));
-        }
-    }
-
-    type_string := builder_to_string(*builder);
-
-    // This is a fucking mess because it makes too many stupid
-    // allocations. Don't bother to fix it. But seems like replace()
-    // does not allcate new memory if the target string is not found.
-    type_string = replace(type_string, "PHYSICAL_DEVICE_VULKAN_1", "PHYSICAL_DEVICE_VULKAN_1_");
-    type_string = replace(type_string, "_INT_64_", "_INT64_");
-    type_string = replace(type_string, "_INT_8_", "_INT8_");
-    type_string = replace(type_string, "_UINT_8_", "_UINT8_");
-    type_string = replace(type_string, "_FLOAT_16_", "_FLOAT16_");
-    type_string = replace(type_string, "_FLOAT_8_", "_FLOAT8_");
-    type_string = replace(type_string, "_BFLOAT_16_", "_BFLOAT16_");
-    type_string = replace(type_string, "_ASTCHDR_", "_ASTC_HDR_");
-    type_string = replace(type_string, "_H_264_", "_H264_");
-    type_string = replace(type_string, "_H_265_", "_H265_");
-    type_string = replace(type_string, "_A_V_1_", "_AV1_");
-    type_string = replace(type_string, "_V_P_9_", "_VP9_");
-    type_string = replace(type_string, "_RGB_A_10_X_6_", "_RGBA10X6_");
-    type_string = replace(type_string, "_2_D_", "_2D_");
-    type_string = replace(type_string, "_3_D_", "_3D_");
-
-    return type_string;
-}
-
 pascal_to_screaming_snake :: (s: string) -> string {
     is_beginning := true;
 
@@ -1281,7 +1136,7 @@ check_vendor_suffix :: (s: string) -> string {
     return "";
 }
 
-strip_enum_member_name :: (member_name: string, enum_name: string) -> string {
+strip_enum_member_name :: (member_name: string, enum_name: string, is_flag_bits: bool) -> string {
     name := member_name;
     ename := enum_name;
 
@@ -1290,11 +1145,34 @@ strip_enum_member_name :: (member_name: string, enum_name: string) -> string {
     esuffix := check_vendor_suffix(enum_name);
     ename = remove_right(ename, esuffix);
 
-    prefix := pascal_to_screaming_snake(ename);
+    prefix : string;
+    if is_flag_bits {
+        // For the enum_flags type, it is suffixed with FlagBits, but
+        // for its member, it is suffixed with BIT. And on top of
+        // that, the enum is also suffixed with vendor names like NV.
+
+        // There are some ridiculous naming like VkAccessFlagBits2 and
+        // its member is VK_ACCESS_2_NONE, dealing with it.
+        is_trailing_digit := false;
+        if is_digit(enum_name[enum_name.count - 1]) {
+            is_trailing_digit = true;
+            ename.count -= 1;
+        }
+
+        ename = remove_right(ename, "FlagBits");
+        prefix = pascal_to_screaming_snake(ename);
+        if is_trailing_digit {
+            prefix = tprint("%_%", prefix, slice(enum_name, enum_name.count - 1, 1));
+        }
+    } else {
+        prefix = pascal_to_screaming_snake(ename);
+    }
+
     if enum_name == "VkResult" {
         // Hard code VkResult prefix, why? It sucks.
         prefix = "VK";
     }
+
     found := false;
     name, found = remove_left(name, prefix);
     // Remove leading _
@@ -1312,63 +1190,14 @@ strip_enum_member_name :: (member_name: string, enum_name: string) -> string {
         }
     }
 
-    // Prefix a E in front of a digit beginning name.
+    if is_flag_bits {
+        name = remove_right(name, "_BIT");
+    }
+
+    // Prefix a 'e' in front of a digit beginning name.
     // This is ugly, I am thinking of a better way to deal with this.
     if is_digit(name[0]) {
-        name = sprint("E%", name);
-    }
-
-    return name;
-}
-
-strip_enum_flag_bits :: (member_name: string, enum_name: string) -> string {
-    // Vulkan flag bits suck, this is almost the identical copy of
-    // strip_enum_member_name(), but with some extra rules. I am too
-    // lazy to extract their common procedures.
-
-    // For the enum type, it is suffixed with FlagBits, but for its
-    // member, it is suffixed with BIT. And on top of that, the enum
-    // is also suffixed with vendor names like NV.
-
-    name := member_name;
-    ename := enum_name;
-
-    esuffix := check_vendor_suffix(enum_name);
-    ename = remove_right(ename, esuffix);
-
-    // There are some ridiculous naming like VkAccessFlagBits2 and its
-    // member is VK_ACCESS_2_NONE, dealing with it.
-    is_trailing_digit := false;
-    if is_digit(enum_name[enum_name.count - 1]) {
-        is_trailing_digit = true;
-        ename.count -= 1;
-    }
-
-    ename = remove_right(ename, "FlagBits");
-
-    found := false;
-    prefix := pascal_to_screaming_snake(ename);
-    if is_trailing_digit {
-        prefix = tprint("%_%", prefix, slice(enum_name, enum_name.count - 1, 1));
-    }
-    name, found = remove_left(name, prefix);
-    // Remove leading _
-    if found {
-        name.data += 1;
-        name.count -= 1;
-    }
-
-    suffix := check_vendor_suffix(enum_name);
-    name, found = remove_right(name, suffix);
-    // Remove trailing _
-    if found {
-        name.count -= 1;
-    }
-
-    name = remove_right(name, "_BIT");
-
-    if is_digit(name[0]) {
-        name = sprint("E%", name);
+        name = sprint("e%", name);
     }
 
     reset_temporary_storage();
