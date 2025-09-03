@@ -501,6 +501,18 @@ extended_enum_value :: (extnumber: string, offset: string, positive := true) -> 
     return extended_enum_value(en, of, positive), true;
 }
 
+add_enum_member_if_unique :: (enum_members: *[..]VK_Enum_Member, member: VK_Enum_Member) -> bool {
+    for m : enum_members.* {
+        if m.name == member.name {
+            return false;
+        }
+    }
+
+    array_add(enum_members, member);
+
+    return true;
+}
+
 handle_extensions :: (parent: Node) {
     // Handling extensions is a nightmare because it extends the
     // original enum, meaning that we have to look through the whole
@@ -510,12 +522,85 @@ handle_extensions :: (parent: Node) {
     // This function is almost guarantee to be slow as hell.
 
     for extension_node : parent.children {
-        extnumber, ok := string_to_int(get_attr(extension_node, "number"));
-        assert(ok);
-
+        extension_number := get_attr(extension_node, "number");
         for require_node : extension_node.children {
             if require_node.tag_name != "require" {
-                log("This is not require, %", require_node.tag_name);
+                continue;
+            }
+
+            if is_vulkansc(require_node) {
+                continue;
+            }
+
+            for member_node : require_node.children {
+                if member_node.tag_name != "enum" {
+                    continue;
+                }
+                m : VK_Enum_Member;
+
+                extends   := get_attr(member_node, "extends");
+                name      := get_attr(member_node, "name");
+                value     := get_attr(member_node, "value");
+                offset    := get_attr(member_node, "offset");
+                dir       := get_attr(member_node, "dir");
+                bitpos    := get_attr(member_node, "bitpos");
+                comment   := get_attr(member_node, "comment");
+                extnumber := get_attr(member_node, "extnumber");
+                alias     := get_attr(member_node, "alias");
+
+                assert(name.count > 0);
+                is_positive := true;
+                if dir == "-" {
+                    is_positive = false;
+                }
+
+                if extends.count > 0 {
+                    member : VK_Enum_Member;
+                    member.comment = comment;
+                    member.name = name;
+                    eindex := find_vk_enum(extends);
+                    if alias.count > 0 {
+                        member.alias = alias;
+                    } else if bitpos.count > 0 {
+                        member.bitpos = bitpos;
+                    } else if offset.count > 0 {
+                        real_extnumber : string;
+                        if extnumber.count > 0 {
+                            real_extnumber = extnumber;
+                        } else {
+                            real_extnumber = extension_number;
+                        }
+
+                        member.value = sprint("%", extended_enum_value(real_extnumber, offset, is_positive));
+                    } else if value.count > 0 {
+                        member.value = value;
+                    }
+                    ok := add_enum_member_if_unique(*vk_enums[eindex].members, member);
+                    if !ok {
+                        // It is duplicated, ignore it.
+                        //
+                        // Or maybe we can append some additional
+                        // comment to the original one.
+
+                        // log("Duplicated member % in %", name, extends);
+                    }
+
+                } else {
+                    // This is a constant
+                    cons : VK_Constant;
+                    cons.name = name;
+                    if alias.count > 0 {
+                        cons.value = alias;
+                    } else {
+                        v, ok := remove_left(value, "&quot;");
+                        if ok {
+                            cons.value = sprint("\"%\"", remove_right(v, "&quot;"));
+                        } else {
+                            cons.value = value;
+                        }
+                    }
+                    array_add(*vk_constants, cons);
+                }
             }
         }
     }
@@ -910,10 +995,29 @@ output_enums :: () {
                 }
             }
 
+            // This is for alignment only, and this also fucking calls
+            // the strip_enum_member_name(), we should only call it
+            // once and store the name somewhere.
+            //
+            // See how much longer does it takes, on my 9950x3d, the
+            // difference is about 0.12s slower, 1.725274s vs
+            // 1.597537s, don't bother to optimize it.
+            align_pos := 0;
+            for m : e.members {
+                if m.name.count > 0 {
+                    stripped_name := strip_enum_member_name(m.name, e.name, e.is_enum_flags);
+                    if stripped_name.count > align_pos {
+                        align_pos = stripped_name.count;
+                    }
+                }
+            }
+
             for m : e.members {
                 if m.name.count > 0 {
                     append(*sb, "    ");
-                    append(*sb, strip_enum_member_name(m.name, e.name, e.is_enum_flags));
+                    stripped_name := strip_enum_member_name(m.name, e.name, e.is_enum_flags);
+                    append(*sb, stripped_name);
+                    repeat_string(" ", align_pos - stripped_name.count, *sb);
                     append(*sb, " :: ");
                     if m.value.count > 0 {
                         append(*sb, m.value);
@@ -956,9 +1060,13 @@ output_constants :: () {
     for c : vk_constants {
         using c;
         append(*sb, name);
-        append(*sb, " : ");
-        append(*sb, type);
-        append(*sb, " : ");
+        if type.count > 0 {
+            append(*sb, " : ");
+            append(*sb, type);
+            append(*sb, " : ");
+        } else {
+            append(*sb, " :: ");
+        }
         if flip {
             append(*sb, "~cast(");
             append(*sb, type);
@@ -1181,9 +1289,8 @@ strip_enum_member_name :: (member_name: string, enum_name: string, is_flag_bits:
         name.count -= 1;
     }
 
-    if enum_name != "VkVendorId" {
-        suffix := check_vendor_suffix(name);
-        name, found = remove_right(name, suffix);
+    if esuffix.count > 0 {
+        name, found = remove_right(name, esuffix);
         // Remove trailing _
         if found {
             name.count -= 1;
@@ -1191,7 +1298,12 @@ strip_enum_member_name :: (member_name: string, enum_name: string, is_flag_bits:
     }
 
     if is_flag_bits {
-        name = remove_right(name, "_BIT");
+        name, found = remove_right(name, "_BIT");
+        if !found {
+            // Remove the _BIT_ in the middle in case the vendor
+            // suffix is useful
+            name = replace(name, "_BIT_", "_");
+        }
     }
 
     // Prefix a 'e' in front of a digit beginning name.
@@ -1261,7 +1373,6 @@ VK_API_VERSION_PATCH   :: (version: u32) -> u32 { return version & 0xfff; }
 #load "constants.jai";
 #load "structures.jai";
 #load "enums.jai";
-#load "enum_flags.jai";
 #load "types.jai";
 #load "function_pointers.jai";
 DONE
