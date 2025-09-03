@@ -322,9 +322,9 @@ handle_struct :: (node: Node) {
                             vk_member.array_prefix = sprint("[%]", member_child.inner_string);
                         case "name";
                             vk_member.name = member_child.inner_string;
-                            if vk_member.name == "sType" {
+                            if vk_member.name == "sType" && vk_struct.name != "VkBaseOutStructure" && vk_struct.name != "VkBaseInStructure" {
                                 default_sType_value := get_attr(member_node, "values");
-                                assert(default_sType_value.count > 0);
+                                assert(default_sType_value.count > 0, "struct %", vk_struct.name);
                                 vk_member.default_value = default_sType_value;
                             }
                         }
@@ -519,6 +519,17 @@ extended_enum_value :: (extnumber: int, offset: int, positive := true) -> int {
     }
 }
 
+// This is an override version that takes a string instead
+extended_enum_value :: (extnumber: string, offset: string, positive := true) -> int {
+    en, ok0 := string_to_int(extnumber);
+    assert(ok0);
+
+    of, ok1 := string_to_int(offset);
+    assert(ok1);
+
+    return extended_enum_value(en, of, positive);
+}
+
 handle_extensions :: (parent: Node) {
     // Handling extensions is a nightmare because it extends the
     // original enum, meaning that we have to look through the whole
@@ -559,8 +570,18 @@ find_vk_enum :: (name: string) -> index:int {
     return -1;
 }
 
+find_vk_enum_flags :: (name: string) -> index:int {
+    for e, i : vk_enum_flags {
+        if e.name == name {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 handle_feature :: (parent: Node) {
-    feature_number := get_attr(parent, "name");
+    feature_number := get_attr(parent, "number");
 
     if feature_number == "1.0" || is_vulkansc(parent) {
         return;
@@ -583,21 +604,42 @@ handle_feature :: (parent: Node) {
                 offset    := get_attr(m, "offset");
                 name      := get_attr(m, "name");
                 bitpos    := get_attr(m, "bitpos");
+                dir       := get_attr(m, "dir");
+                alias     := get_attr(m, "alias");
+                comment   := get_attr(m, "comment");
+                is_positive := true;
+                if dir == "-" {
+                    is_positive = false;
+                };
+
+                if alias.count > 0 {
+                    // If it is an alias, we can only deduce whether
+                    // it is a enum or enum_flags by name, which
+                    // sucks.
+                }
+
+
                 if bitpos.count > 0 {
+                    eindex := find_vk_enum_flags(extends);
+                    assert(eindex >= 0);
+
+
 
                 } else {
                     // find the VK_Enum
-                    vk_enum_index := find_vk_enum(name);
-                    assert(vk_enum_index >= 0);
+                    vk_enum_index := find_vk_enum(extends);
+                    assert(vk_enum_index >= 0, "%", m.raw_string);
 
                     // TODO: Not finished
                     member := VK_Enum_Member.{
                         name = name,
-
+                        value = sprint("%", extended_enum_value(extnumber, offset, is_positive)),
+                        comment = comment,
                     };
 
-                    array_add(*vk_enums[vk_enum_index].members, )
+                    array_add(*vk_enums[vk_enum_index].members, member);
                 }
+
             }
         }
     }
@@ -806,7 +848,8 @@ output_structures :: () {
                         append(*sb, ": ");
                         append(*sb, member.type);
                         append(*sb, " = .");
-                        append(*sb, get_sType_default_value_from_struct_name(structure.name));
+                        v := remove_left(member.default_value, "VK_STRUCTURE_TYPE_");
+                        append(*sb, v);
                         append(*sb, ";\n");
                     } else {
                         output_structure_member(member, *sb);
