@@ -829,6 +829,9 @@ output_structure_member :: (member: VK_Structure_Member, sb: *String_Builder) {
         append(sb, member.comment);
         append(sb, " */");
     }
+    if (member.bitmask > 0) {
+        append(sb, sprint(" /* % bits */", member.bitmask));
+    }
 
     append(sb, "\n");
 }
@@ -863,7 +866,7 @@ output_structures :: () {
                     if bitmask_current == bitmask_target {
                         append(*sb, "    __bitmask: ");
                         append(*sb, bitmask_type);
-                        append(*sb, "\n");
+                        append(*sb, ";\n");
                         append(*sb, "    /*\n");
                         for bm : bitmask_members {
                             output_structure_member(bm, *sb);
