@@ -973,6 +973,8 @@ output_function_pointers :: () {
     write_entire_file("function_pointers.jai", *sb);
 }
 
+// Make sure to call this function at the end because it modifies the
+// original value.
 output_enums :: () {
     sb: String_Builder;
 
@@ -995,19 +997,17 @@ output_enums :: () {
                 }
             }
 
-            // This is for alignment only, and this also fucking calls
-            // the strip_enum_member_name(), we should only call it
-            // once and store the name somewhere.
-            //
-            // See how much longer does it takes, on my 9950x3d, the
-            // difference is about 0.12s slower, 1.725274s vs
-            // 1.597537s, don't bother to optimize it.
+            // This modify the member name so we don't have to call
+            // strip_enum_member_name() twice. Resulting in a 0.1s
+            // drop in execution time. Maybe I should add one more
+            // field to VK_Enum_Member to store instead of directly
+            // modify the name.
             align_pos := 0;
-            for m : e.members {
+            for *m : e.members {
                 if m.name.count > 0 {
-                    stripped_name := strip_enum_member_name(m.name, e.name, e.is_enum_flags);
-                    if stripped_name.count > align_pos {
-                        align_pos = stripped_name.count;
+                    m.name = strip_enum_member_name(m.name, e.name, e.is_enum_flags);
+                    if m.name.count > align_pos {
+                        align_pos = m.name.count;
                     }
                 }
             }
@@ -1015,9 +1015,8 @@ output_enums :: () {
             for m : e.members {
                 if m.name.count > 0 {
                     append(*sb, "    ");
-                    stripped_name := strip_enum_member_name(m.name, e.name, e.is_enum_flags);
-                    append(*sb, stripped_name);
-                    repeat_string(" ", align_pos - stripped_name.count, *sb);
+                    append(*sb, m.name);
+                    repeat_string(" ", align_pos - m.name.count, *sb);
                     append(*sb, " :: ");
                     if m.value.count > 0 {
                         append(*sb, m.value);
