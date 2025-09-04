@@ -1143,6 +1143,10 @@ output_dynamic_functions :: () {
         }
     }
 
+    // Hard code the debug util messenger to global func
+    append(*sb0, "vkDebugUtilsMessengerCallbackEXT : PFN_vkDebugUtilsMessengerCallbackEXT;\n");
+    array_add(*global_func, "vkDebugUtilsMessengerCallbackEXT");
+
     append(*sb0, "\n");
     append(*sb0, "vk_load_global_functions :: (vk_get_instance_proc_addr: *void) {\n");
     append(*sb0, "    vkGetInstanceProcAddr = xx vk_get_instance_proc_addr;\n\n");
