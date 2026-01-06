@@ -78,18 +78,33 @@ report_parse_error :: (lexer: *Lexer, token: *Token, format: string, arguments: 
 } @PrintLike
 
 get_token :: (lexer: *Lexer) -> Token {
+    token: Token;
     while 1 {
         c := peek_next_character(lexer);
         if c < 0 return .{ type = .EOF };
 
         if c == #char "<" {
-            return make_tag(lexer);
+            token = make_tag(lexer);
+            break;
         } else {
-            return make_inner_string(lexer);
+            token = make_inner_string(lexer);
+            break;
         }
     }
 
-    return .{};
+    if token.type == .INNER {
+        is_all_space := true;
+        for token.raw {
+            if !is_space(it) {
+                is_all_space = false;
+            }
+        }
+        if is_all_space {
+            return get_token(lexer);
+        }
+    }
+
+    return token;
 }
 
 skip_spaces :: (lexer: *Lexer) {
