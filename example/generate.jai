@@ -121,7 +121,7 @@ VK_Constant :: struct {
 
 generation_loop :: (root_node: Node) {
     for root_child : root_node.children {
-        if root_child.tag_name == {
+        if root_child.tag.name == {
         case "tags";
             handle_tags(root_child);
         case "types";
@@ -176,13 +176,13 @@ handle_bitmask :: (node: Node) {
     } else {
         for child : node.children {
             if child.type == .NODE {
-                if child.tag_name == {
+                if child.tag.name == {
                 case "name";
-                    name = child.inner_string;
+                    name = child.children[0].str;
                 case "type";
-                    type = child.inner_string;
+                    type = child.children[0].str;
                 case;
-                    log("unhandled child in bitmask: %", node.raw_string);
+                    log("unhandled child in bitmask: %", node.str);
                 }
             }
         }
@@ -206,21 +206,21 @@ handle_handle :: (node: Node) {
     } else {
         for child : node.children {
             if child.type == .NODE {
-                if child.tag_name == {
+                if child.tag.name == {
                 case "name";
-                    name = child.inner_string;
+                    name = child.children[0].str;
                 case "type";
-                    type_string := child.inner_string;
+                    type_string := child.children[0].str;
                     if type_string == {
                     case "VK_DEFINE_HANDLE";
                         type = "*void";
                     case "VK_DEFINE_NON_DISPATCHABLE_HANDLE";
                         type = "u64";
                     case;
-                        assert(false, "something wrong in handle: %", node.raw_string);
+                        assert(false, "something wrong in handle: %", node.tag);
                     }
                 case;
-                    log("unhandled child in bitmask: %", node.raw_string);
+                    log("unhandled child in bitmask: %", node.tag);
                 }
             }
         }
@@ -241,13 +241,13 @@ handle_funcpointer :: (node: Node) {
     using vk_funcptr : VK_Function_Pointer;
 
     return_type_node := node.children[0];
-    ss := split(return_type_node.raw_string, " ");
+    ss := split(return_type_node.str, " ");
     return_type = ss[1];
 
     name_node, name_index := find_node_of_tag_name(node, "name");
-    assert(name_index >= 0, "funcpointer error: %", node.raw_string);
+    assert(name_index >= 0, "funcpointer error: %", node.tag);
 
-    name = name_node.inner_string;
+    name = name_node.children[0].str;
 
     index := name_index + 1;
     while index < node.children.count {
@@ -257,9 +257,9 @@ handle_funcpointer :: (node: Node) {
             break;
         }
 
-        param.type = type_node.inner_string;
+        param.type = type_node.children[0].str;
         param_node := node.children[type_index + 1];
-        param.name = param_node.raw_string;
+        param.name = param_node.str;
         number_of_pointer = count_pointer(param.name);
         param.name = clean_parameter_name(param.name);
 
@@ -285,7 +285,7 @@ handle_struct :: (node: Node) {
         // struct node is member.
         for member_node : node.children {
             // This check is redundant.
-            if member_node.tag_name == "member" {
+            if member_node.tag.name == "member" {
                 if is_vulkansc(member_node) {
                     continue;
                 }
@@ -296,18 +296,18 @@ handle_struct :: (node: Node) {
                 is_square_bracket_done := false;
                 for member_child : member_node.children {
                     if member_child.type == .NODE {
-                        if member_child.tag_name == {
+                        if member_child.tag.name == {
                         case "type";
-                            vk_member.type = convert_type(member_child.inner_string);
+                            vk_member.type = convert_type(member_child.children[0].str);
                         case "comment";
-                            vk_member.comment = member_child.inner_string;
+                            vk_member.comment = member_child.children[0].str;
                         case "enum";
                         // The only way that a enum node appears is as
                         // a enum constant to indicate a fixed array
                         // length.
-                            vk_member.array_prefix = sprint("[%]", member_child.inner_string);
+                            vk_member.array_prefix = sprint("[%]", member_child.children[0].str);
                         case "name";
-                            vk_member.name = member_child.inner_string;
+                            vk_member.name = member_child.children[0].str;
                             if vk_member.name == "sType" && vk_struct.name != "VkBaseOutStructure" && vk_struct.name != "VkBaseInStructure" {
                                 default_sType_value := get_attr(member_node, "values");
                                 assert(default_sType_value.count > 0, "struct %", vk_struct.name);
@@ -315,7 +315,7 @@ handle_struct :: (node: Node) {
                             }
                         }
                     } else {
-                        s := trim(member_child.raw_string);
+                        s := trim(member_child.str);
 
                         if begins_with(s, "[") && ends_with(s, "]") {
                             vk_member.array_prefix = s;
@@ -388,7 +388,7 @@ handle_enum :: (node: Node, is_bitmask: bool) {
 
     for member_node : node.children {
         m : VK_Enum_Member;
-        if member_node.tag_name == "enum" {
+        if member_node.tag.name == "enum" {
             m.name = get_attr(member_node, "name");
             assert(m.name.count > 0);
 
@@ -397,8 +397,8 @@ handle_enum :: (node: Node, is_bitmask: bool) {
             m.alias  = get_attr(member_node, "alias");
 
             m.comment = get_attr(member_node, "comment");
-        } else if member_node.tag_name == "comment" {
-            m.comment = member_node.inner_string;
+        } else if member_node.tag.name == "comment" {
+            m.comment = member_node.children[0].str;
         }
 
         array_add(*e.members, m);
@@ -426,23 +426,23 @@ handle_commands :: (parent: Node) {
                     continue;
                 }
 
-                if member_node.tag_name ==  {
+                if member_node.tag.name ==  {
                 case "proto";
                     for proto_child : member_node.children {
                         if proto_child.type == .NODE {
-                            if proto_child.tag_name == {
+                            if proto_child.tag.name == {
                             case "type";
-                                command.return_type = convert_type(proto_child.inner_string);
+                                command.return_type = convert_type(proto_child.children[0].str);
                             case "name";
-                                command.name = proto_child.inner_string;
+                                command.name = proto_child.children[0].str;
                             case;
                                 log("unhandled node in %", command.name);
                             }
                         } else {
-                            if begins_with(proto_child.raw_string, "*") {
-                                command.number_of_pointer = count_pointer(proto_child.raw_string);
+                            if begins_with(proto_child.str, "*") {
+                                command.number_of_pointer = count_pointer(proto_child.str);
                             } else {
-                                log("what is this? %", proto_child.raw_string);
+                                log("what is this? %", proto_child.str);
                             }
                         }
                     }
@@ -450,17 +450,17 @@ handle_commands :: (parent: Node) {
                     param : VK_Function_Param;
                     for param_child : member_node.children {
                         if param_child.type == .NODE {
-                            if param_child.tag_name == {
+                            if param_child.tag.name == {
                             case "type";
-                                param.type = convert_type(param_child.inner_string);
+                                param.type = convert_type(param_child.children[0].str);
                             case "name";
-                                param.name = param_child.inner_string;
+                                param.name = param_child.children[0].str;
                             }
                         } else {
-                            if begins_with(param_child.raw_string, "*") {
-                                param.number_of_pointer = count_pointer(param_child.raw_string);
-                            } else if begins_with(param_child.raw_string, "[") && ends_with(param_child.raw_string, "]") {
-                                param.array_prefix = param_child.raw_string;
+                            if begins_with(param_child.str, "*") {
+                                param.number_of_pointer = count_pointer(param_child.str);
+                            } else if begins_with(param_child.str, "[") && ends_with(param_child.str, "]") {
+                                param.array_prefix = param_child.str;
                             }
                         }
                     }
@@ -524,7 +524,7 @@ handle_extensions :: (parent: Node) {
     for extension_node : parent.children {
         extension_number := get_attr(extension_node, "number");
         for require_node : extension_node.children {
-            if require_node.tag_name != "require" {
+            if require_node.tag.name != "require" {
                 continue;
             }
 
@@ -533,7 +533,7 @@ handle_extensions :: (parent: Node) {
             }
 
             for member_node : require_node.children {
-                if member_node.tag_name != "enum" {
+                if member_node.tag.name != "enum" {
                     continue;
                 }
                 m : VK_Enum_Member;
@@ -627,12 +627,12 @@ handle_feature :: (parent: Node) {
     }
 
     for require_node : parent.children {
-        if require_node.tag_name != "require" {
+        if require_node.tag.name != "require" {
             continue;
         }
 
         for m : require_node.children {
-            if m.tag_name == {
+            if m.tag.name == {
             case "type";
                 #through;
             case "command";
@@ -656,7 +656,7 @@ handle_feature :: (parent: Node) {
                 }
 
                 vk_enum_index := find_vk_enum(extends);
-                assert(vk_enum_index >= 0, "%", m.raw_string);
+                assert(vk_enum_index >= 0, "%", m.tag);
                 member : VK_Enum_Member;
                 member.name = name;
                 member.comment = comment;
@@ -669,7 +669,7 @@ handle_feature :: (parent: Node) {
                     member.value = value;
                 } else {
                     v, ok := extended_enum_value(extnumber, offset, is_positive);
-                    assert(ok, "%", m.raw_string);
+                    assert(ok, "%", m.tag);
                     member.value = sprint("%", v);
                 }
 
