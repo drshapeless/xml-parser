@@ -17,20 +17,58 @@ Node :: struct {
     done := false;
 }
 
+parse_xml_from_file :: (file_path: string) -> Node {
+    lexer: Lexer;
+    set_input_from_file(*lexer, file_path);
+    return internal_parse_xml(*lexer);
+}
+
 parse_xml :: (s: string) -> Node {
     lexer: Lexer;
     set_input_from_string(*lexer, s);
+    return internal_parse_xml(*lexer);
+}
 
+find_node_of_tag_name :: (parent: Node, name: string, index: int = 0) -> *Node, int {
+    if index < parent.children.count {
+        for i : index..parent.children.count - 1 {
+            child := *parent.children[i];
+            if child.type == .NODE && child.tag.name == name {
+                return child, i;
+            }
+        }
+    }
+
+    return null, -1;
+}
+
+get_attr :: (node: Node, key: string) -> string, bool {
+    for attr: node.tag.attrs {
+        if attr.key == key {
+            return attr.value, true;
+        }
+    }
+
+    return "", false;
+}
+
+is_self_close_node :: (node: Node) -> bool {
+    return node.tag.type == .SELF_CLOSE;
+}
+
+#scope_file
+internal_parse_xml :: (lexer: *Lexer) -> Node {
     root: Node;
 
     current: *Node = null;
 
     while 1 {
-        token := get_token(*lexer);
+        token := get_token(lexer);
         if token.type == {
         case .EOF;
-            #through;
+            break;
         case .ERROR;
+            report_parse_error(lexer, *token, "Error");
             break;
         case .TAG;
             if #complete token.tag.type == {
@@ -56,12 +94,12 @@ parse_xml :: (s: string) -> Node {
                 }
             case .CLOSE;
                 if current.tag.name != token.tag.name {
-                    report_parse_error(*lexer, *token, "Unmatch close tag, expect %, get %", current.tag.name, token.tag.name);
+                    report_parse_error(lexer, *token, "Unmatch close tag, expect %, get %", current.tag.name, token.tag.name);
                     break;
                 }
 
                 if current.done == true {
-                    report_parse_error(*lexer, *token, "Extra close tag");
+                    report_parse_error(lexer, *token, "Extra close tag");
                     break;
                 }
 
@@ -96,33 +134,6 @@ parse_xml :: (s: string) -> Node {
     }
 
     return root;
-}
-
-find_node_of_tag_name :: (parent: Node, name: string, index: int = 0) -> *Node, int {
-    if index < parent.children.count {
-        for i : index..parent.children.count - 1 {
-            child := *parent.children[i];
-            if child.type == .NODE && child.tag.name == name {
-                return child, i;
-            }
-        }
-    }
-
-    return null, -1;
-}
-
-get_attr :: (node: Node, key: string) -> string, bool {
-    for attr: node.tag.attrs {
-        if attr.key == key {
-            return attr.value, true;
-        }
-    }
-
-    return "", false;
-}
-
-is_self_close_node :: (node: Node) -> bool {
-    return node.tag.type == .SELF_CLOSE;
 }
 
 #import "Basic";
