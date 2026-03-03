@@ -52,6 +52,7 @@ XML :: struct {
     string_buffer_cursor: *u8;
 }
 
+// The root node is located at idx 1
 parse_xml :: (s: string) -> XML {
     lexer: Lexer;
     lexer.input = s;
@@ -60,8 +61,6 @@ parse_xml :: (s: string) -> XML {
     init_xml(*xml, s.count);
 
     current_idx: XML.Node.IDX;
-    is_inside_tag := false;
-    is_tag_closed := true;
 
     while !lexer.reported_error {
         token := get_token(*lexer);
@@ -85,30 +84,75 @@ parse_xml :: (s: string) -> XML {
     return xml;
 }
 
-find_element :: (xml: *XML, root_node: XML.Node.IDX) -> XML.Node.IDX {
+find_element :: (xml: *XML, root: XML.Node.IDX, name: string) -> XML.Node.IDX, *XML.Node {
+    walk_children(xml, root, #code {
+        if it.type == .ELEMENT && it.text == name {
+            return it_index, it;
+        }
+    });
 
+    return 0, null;
 }
 
-loop_child :: (xml: *XML, idx: XML.Node.IDX, body: Code) #expand {
-    current_node := get_node(xml, idx);
-
-    if current_node.first_child_idx == 0 return;
-
-    `it: *XML.Node;
-    `it_index: s64;
-
-    while true {
-        child_node := get_node(xml, current_node.first_child_idx);
-        `it = child_node;
-
-        if child_node.next_sibling_idx == current_node.first_child_idx {
-            break;
+find_attribute :: (xml: *XML, root: XML.Node.IDX, key: string) -> found:bool, string {
+    walk_attributes(xml, root, #code {
+        if it_index == key {
+            return true, it;
         }
+    });
+
+    return false, "";
+}
+
+walk_children :: (xml: *XML, parent_idx: XML.Node.IDX, body: Code) #expand {
+    parent_node := get_node(xml, parent_idx);
+
+    if parent_node.first_child_idx == 0 return;
+
+    idx := parent_node.first_child_idx;
+    while true {
+        child_node := get_node(xml, idx);
+        // next_sibling_idx will never equal to 0
+        assert(child_node.next_sibling_idx != 0, "next_sibling_idx should never equal to 0");
+
+        `it := child_node;
+        `it_index := idx;
 
         #insert body;
 
-        it_index += 1;
+        if child_node.next_sibling_idx == parent_node.first_child_idx {
+            break;
+        }
+
+        idx = child_node.next_sibling_idx;
     }
+}
+
+walk_attributes :: (xml: *XML, parent_idx: XML.Node.IDX, body: Code) #expand {
+    parent_node := get_node(xml, parent_idx);
+
+    if parent_node.first_attribute_idx == 0 return;
+
+    idx := parent_node.first_attribute_idx;
+
+    while true {
+        attr := get_attribute(xml, idx);
+
+        `it_index := attr.key;
+        `it := attr.value;
+
+        if attr.next_sibling_idx == 0 {
+            break;
+        }
+
+        idx = attr.next_sibling_idx;
+    }
+}
+
+free :: (xml: XML) {
+    array_free(xml.nodes);
+    array_free(xml.attributes);
+    free(xml.string_buffer);
 }
 
 #scope_file
@@ -126,6 +170,7 @@ init_xml :: (xml: *XML, string_size: s64) {
 }
 
 get_node :: (xml: *XML, idx: XML.Node.IDX) -> *XML.Node {
+    assert(idx < xml.nodes.count);
     return *xml.nodes[idx];
 }
 
@@ -336,6 +381,11 @@ parse_tag :: (xml: *XML, lexer: *Lexer, current_idx: *XML.Node.IDX) {
         report_parse_error(lexer, first_token, "Unexpected token % after L_BRACKET", first_token.type);
         return;
     }
+}
+
+get_attribute :: (xml: *XML, idx: XML.Attribute.IDX) -> *XML.Attribute {
+    assert(idx < xml.attributes.count);
+    return *xml.attributes[idx];
 }
 
 #import "Basic";
