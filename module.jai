@@ -89,8 +89,26 @@ find_element :: (xml: *XML, root_node: XML.Node.IDX) -> XML.Node.IDX {
 
 }
 
-loop_child :: (node_idx: XML.Node.IDX, code: Code) {
+loop_child :: (xml: *XML, idx: XML.Node.IDX, body: Code) #expand {
+    current_node := get_node(xml, idx);
 
+    if current_node.first_child_idx == 0 return;
+
+    `it: *XML.Node;
+    `it_index: s64;
+
+    while true {
+        child_node := get_node(xml, current_node.first_child_idx);
+        `it = child_node;
+
+        if child_node.next_sibling_idx == current_node.first_child_idx {
+            break;
+        }
+
+        #insert body;
+
+        it_index += 1;
+    }
 }
 
 #scope_file
