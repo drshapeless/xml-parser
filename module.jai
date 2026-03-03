@@ -110,7 +110,8 @@ walk_children :: (xml: *XML, parent_idx: XML.Node.IDX, body: Code) #expand {
     if parent_node.first_child_idx == 0 return;
 
     idx := parent_node.first_child_idx;
-    while true {
+    is_done := false;
+    while !is_done {
         child_node := get_node(xml, idx);
         // next_sibling_idx will never equal to 0
         assert(child_node.next_sibling_idx != 0, "next_sibling_idx should never equal to 0");
@@ -118,13 +119,13 @@ walk_children :: (xml: *XML, parent_idx: XML.Node.IDX, body: Code) #expand {
         `it := child_node;
         `it_index := idx;
 
-        #insert body;
-
         if child_node.next_sibling_idx == parent_node.first_child_idx {
-            break;
+            is_done = true;
         }
 
         idx = child_node.next_sibling_idx;
+
+        #insert body;
     }
 }
 
@@ -135,17 +136,20 @@ walk_attributes :: (xml: *XML, parent_idx: XML.Node.IDX, body: Code) #expand {
 
     idx := parent_node.first_attribute_idx;
 
-    while true {
+    is_done := false;
+    while !is_done {
         attr := get_attribute(xml, idx);
 
         `it_index := attr.key;
         `it := attr.value;
 
         if attr.next_sibling_idx == 0 {
-            break;
+            is_done = true;
         }
 
         idx = attr.next_sibling_idx;
+
+        #insert body;
     }
 }
 
