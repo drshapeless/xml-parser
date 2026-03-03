@@ -8,6 +8,7 @@ Token_Type :: enum {
     STRING;
     CONTENT;
     QUESTION;
+    BANG;
     DASH;
     EOF;
 }
@@ -63,6 +64,8 @@ get_token :: (lexer: *Lexer) -> Token {
             lexer.is_inside_tag = false;
         case #char "-";
             token = make_single_character_token(lexer, .DASH);
+        case #char "!";
+            token = make_single_character_token(lexer, .BANG);
         case #char "?";
             token = make_single_character_token(lexer, .QUESTION);
         case;
@@ -89,6 +92,13 @@ get_token :: (lexer: *Lexer) -> Token {
 
             if all_space {
                 skip_spaces(lexer);
+                c = peek_next_character(lexer);
+                if c < 0 return .{ type = .EOF };
+
+                if c != #char "<" {
+                    report_parse_error(lexer, "Expect <");
+                    return .{type = .ERROR};
+                }
                 token = make_single_character_token(lexer, .L_BRACKET);
                 lexer.is_inside_tag = true;
             }
