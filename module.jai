@@ -84,6 +84,16 @@ parse_xml :: (s: string) -> XML {
     return xml;
 }
 
+get_node :: (xml: *XML, idx: XML.Node.IDX) -> *XML.Node {
+    assert(idx < xml.nodes.count);
+    return *xml.nodes[idx];
+}
+
+get_attribute :: (xml: *XML, idx: XML.Attribute.IDX) -> *XML.Attribute {
+    assert(idx < xml.attributes.count);
+    return *xml.attributes[idx];
+}
+
 find_element :: (xml: *XML, root: XML.Node.IDX, name: string) -> XML.Node.IDX, *XML.Node {
     walk_children(xml, root, #code {
         if it.type == .ELEMENT && it.text == name {
@@ -171,11 +181,6 @@ init_xml :: (xml: *XML, string_size: s64) {
 
     empty_attr: XML.Attribute;
     array_add(*xml.attributes, empty_attr);
-}
-
-get_node :: (xml: *XML, idx: XML.Node.IDX) -> *XML.Node {
-    assert(idx < xml.nodes.count);
-    return *xml.nodes[idx];
 }
 
 make_node :: (xml: *XML, node: XML.Node) -> XML.Node.IDX, *XML.Node {
@@ -385,11 +390,6 @@ parse_tag :: (xml: *XML, lexer: *Lexer, current_idx: *XML.Node.IDX) {
         report_parse_error(lexer, first_token, "Unexpected token % after L_BRACKET", first_token.type);
         return;
     }
-}
-
-get_attribute :: (xml: *XML, idx: XML.Attribute.IDX) -> *XML.Attribute {
-    assert(idx < xml.attributes.count);
-    return *xml.attributes[idx];
 }
 
 #import "Basic";
