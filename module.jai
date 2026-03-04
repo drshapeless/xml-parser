@@ -259,7 +259,7 @@ parse_tag :: (xml: *XML, lexer: *Lexer, current_idx: *XML.Node.IDX) {
             attr.value = make_string(xml, it.value);
 
             if it_index < attrs.count - 1 {
-                attr.next_sibling_idx = xml.attributes.count;
+                attr.next_sibling_idx = xml.attributes.count + 1;
             }
 
             array_add(*xml.attributes, attr);
