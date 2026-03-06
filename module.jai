@@ -22,7 +22,7 @@ XML :: struct {
 
         parent_idx: IDX;
         first_child_idx: IDX;
-        first_attribute_idx: Attribute.IDX;
+        first_attribute_idx: IDX;
 
         // Ring structure, the last item points to the first. This should
         // eliminate the need of last_child_idx, but it has to transverse
@@ -165,9 +165,6 @@ init_xml :: (xml: *XML, string_size: s64) {
     // here we append an empty node as the nil thing
     empty_node: XML.Node;
     array_add(*xml.nodes, empty_node);
-
-    empty_attr: XML.Attribute;
-    array_add(*xml.attributes, empty_attr);
 }
 
 make_node :: (xml: *XML, node: XML.Node) -> XML.Node.IDX, *XML.Node {
@@ -247,7 +244,7 @@ parse_tag :: (xml: *XML, lexer: *Lexer, current_idx: *XML.Node.IDX) {
             return 0;
         }
 
-        first := xml.attributes.count;
+        first := xml.nodes.count;
         for attrs {
             attr: XML.Node;
 
@@ -255,13 +252,13 @@ parse_tag :: (xml: *XML, lexer: *Lexer, current_idx: *XML.Node.IDX) {
             attr.value = make_string(xml, it.value);
 
             if it_index < attrs.count - 1 {
-                attr.next_sibling_idx = xml.attributes.count + 1;
+                attr.next_sibling_idx = xml.nodes.count + 1;
             } else {
                 // The last one point to the first one
                 attr.next_sibling_idx = first;
             }
 
-            array_add(*xml.attributes, attr);
+            array_add(*xml.nodes, attr);
         }
 
         return first;
