@@ -12,7 +12,13 @@ XML :: struct {
 
         type: Node_Type;
 
-        text: string;
+        union {
+            text: string;
+            key:  string;
+        }
+
+        value: string;
+
 
         parent_idx: IDX;
         first_child_idx: IDX;
@@ -29,19 +35,6 @@ XML :: struct {
 
     // We have no idea how many nodes are there, so this cannot be preallocated.
     nodes: [..] Node;
-
-    Attribute :: struct {
-        IDX :: #type s64;
-
-        key: string;
-        value: string;
-
-        // For attribute, this would not be a ring structure, the last
-        // member point to 0
-        next_sibling_idx: IDX;
-    }
-
-    attributes: [..] Attribute;
 
     // We have a string buffer that stores all the string in the whole xml
     //
@@ -87,11 +80,6 @@ parse_xml :: (s: string) -> XML {
 get_node :: (xml: *XML, idx: XML.Node.IDX) -> *XML.Node {
     assert(idx < xml.nodes.count);
     return *xml.nodes[idx];
-}
-
-get_attribute :: (xml: *XML, idx: XML.Attribute.IDX) -> *XML.Attribute {
-    assert(idx < xml.attributes.count);
-    return *xml.attributes[idx];
 }
 
 find_element :: (xml: *XML, root: XML.Node.IDX, name: string) -> XML.Node.IDX, *XML.Node {
@@ -148,12 +136,12 @@ walk_attributes :: (xml: *XML, parent_idx: XML.Node.IDX, body: Code) #expand {
 
     is_done := false;
     while !is_done {
-        attr := get_attribute(xml, idx);
+        attr := get_node(xml, idx);
 
         `it_index := attr.key;
         `it := attr.value;
 
-        if attr.next_sibling_idx == 0 {
+        if attr.next_sibling_idx == parent_node.first_attribute_idx {
             is_done = true;
         }
 
@@ -165,7 +153,6 @@ walk_attributes :: (xml: *XML, parent_idx: XML.Node.IDX, body: Code) #expand {
 
 free :: (xml: XML) {
     array_free(xml.nodes);
-    array_free(xml.attributes);
     free(xml.string_buffer);
 }
 
@@ -253,7 +240,7 @@ parse_tag :: (xml: *XML, lexer: *Lexer, current_idx: *XML.Node.IDX) {
         value: string;
     }
 
-    add_attributes :: (xml: *XML, attrs: [] Attribute) -> XML.Attribute.IDX {
+    add_attributes :: (xml: *XML, attrs: [] Attribute) -> XML.Node.IDX {
         // Returns the first IDX
 
         if attrs.count == 0 {
@@ -262,13 +249,16 @@ parse_tag :: (xml: *XML, lexer: *Lexer, current_idx: *XML.Node.IDX) {
 
         first := xml.attributes.count;
         for attrs {
-            attr: XML.Attribute;
+            attr: XML.Node;
 
             attr.key = make_string(xml, it.key);
             attr.value = make_string(xml, it.value);
 
             if it_index < attrs.count - 1 {
                 attr.next_sibling_idx = xml.attributes.count;
+            } else {
+                // The last one point to the first one
+                attr.next_sibling_idx = first;
             }
 
             array_add(*xml.attributes, attr);
