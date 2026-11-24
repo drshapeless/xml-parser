@@ -32,9 +32,9 @@ Token :: struct {
 }
 
 Lexer_Mode :: enum {
-    ERROR;
     OUTSIDE;
     INSIDE_TAG;
+    INSIDE_ATTRIBUTE_VALUE;
     INSIDE_DOCTYPE;
     INSIDE_DOCUMENT_TYPE_DEFINITION; // DTD
     INSIDE_CDATA;
@@ -109,13 +109,57 @@ next_token :: (using lexer: *Lexer) -> Token {
         }
 
         if #complete mode == {
+        case .OUTSIDE;
+            if c == #char "<" {
+                mode = .INSIDE_TAG;
+                break;
+            } else {
+                token.kind = .TEXT;
+                consume(lexer, 1);
+                token.text.count += 1;
+            }
+        case .INSIDE_TAG;
+            token.text.count += 1;
+            consume(lexer, 1);
+            _, c1 := peek_char(lexer);
+            if c == {
+            case #char "<";
+                if c1 == #char "/" {
+                    token.kind = .CLOSE_TAG_START;
+                    token.text.count += 1;
+                    consume(lexer, 1);
+                } else {
+                    token.kind = .OPEN_TAG_START;
+                }
+                break;
+            case #char "\"";
+                token.kind = .ATTRIBUTE_VALUE;
+                mode = .INSIDE_ATTRIBUTE_VALUE;
+            case #char "=";
+                token.kind = .EQUALS;
+                break;
+            case;
+                token.kind = .NAME;
+            }
 
+        case .INSIDE_ATTRIBUTE_VALUE;
+
+        case .INSIDE_DOCTYPE;
+
+        case .INSIDE_DOCUMENT_TYPE_DEFINITION;
+
+        case .INSIDE_CDATA;
+
+        case .INSIDE_COMMENT;
         }
 
-        consume(lexer, 1);
     }
 
     return token;
+}
+
+handle_outside :: (using lexer: *Lexer, token: *Token) {
+
 }
 
 #import "String";
